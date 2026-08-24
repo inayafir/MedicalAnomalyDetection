@@ -1,21 +1,14 @@
 from pathlib import Path
+import json
+import random
 
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 
 from PIL import Image
-
-from torch import nn
-from torch.optim import AdamW
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-
-from torch.utils.data import (
-    Dataset,
-    DataLoader,
-    WeightedRandomSampler,
-)
-
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from torchvision import models, transforms
 
 from sklearn.metrics import (
@@ -37,7 +30,11 @@ DATA_DIR = (
     / "data"
     / "processed"
     / "classification"
+    / "resnet50"
 )
+
+TRAIN_CSV = DATA_DIR / "train.csv"
+VAL_CSV = DATA_DIR / "val.csv"
 
 IMAGE_DIR = (
     PROJECT_ROOT
@@ -51,16 +48,12 @@ OUTPUT_DIR = (
     PROJECT_ROOT
     / "outputs"
     / "classification"
+    / "resnet50"
 )
 
 OUTPUT_DIR.mkdir(
     parents=True,
     exist_ok=True
-)
-
-CHECKPOINT_PATH = (
-    OUTPUT_DIR
-    / "resnet50_best.pth"
 )
 
 
@@ -70,15 +63,20 @@ CHECKPOINT_PATH = (
 
 NUM_CLASSES = 5
 
+CLASS_NAMES = [
+    "Normal",
+    "Cardiomegaly",
+    "Pleural effusion",
+    "Lung Opacity",
+    "Pulmonary fibrosis",
+]
+
 IMAGE_SIZE = 224
 
+# CPU training is slow, so keep this manageable.
 BATCH_SIZE = 8
 
-NUM_WORKERS = 0
-
-# We already completed a 1-epoch pipeline test.
-# Now we perform proper training.
-EPOCHS = 5
+NUM_EPOCHS = 5
 
 LEARNING_RATE = 1e-4
 
@@ -99,72 +97,87 @@ DEVICE = torch.device(
 
 
 # ============================================================
+# OUTPUT FILES
+# ============================================================
+
+BEST_MODEL_PATH = (
+    OUTPUT_DIR
+    / "best_model.pth"
+)
+
+FINAL_MODEL_PATH = (
+    OUTPUT_DIR
+    / "final_model.pth"
+)
+
+HISTORY_PATH = (
+    OUTPUT_DIR
+    / "training_history.json"
+)
+
+CONFUSION_MATRIX_PATH = (
+    OUTPUT_DIR
+    / "confusion_matrix.npy"
+)
+
+CLASS_NAMES_PATH = (
+    OUTPUT_DIR
+    / "class_names.json"
+)
+
+
+# ============================================================
 # REPRODUCIBILITY
 # ============================================================
 
-torch.manual_seed(
-    RANDOM_SEED
-)
+def set_seed(seed=RANDOM_SEED):
 
-if torch.cuda.is_available():
+    random.seed(seed)
 
-    torch.cuda.manual_seed_all(
-        RANDOM_SEED
-    )
+    np.random.seed(seed)
 
+    torch.manual_seed(seed)
 
-# ============================================================
-# CLASS NAMES
-# ============================================================
-
-CLASS_NAMES = [
-    "Normal",
-    "Cardiomegaly",
-    "Pleural effusion",
-    "Lung Opacity",
-    "Pulmonary fibrosis",
-]
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 # ============================================================
 # DATASET
 # ============================================================
 
-class ChestXrayDataset(Dataset):
+class VinBigDataDataset(Dataset):
 
     def __init__(
         self,
-        csv_file,
+        dataframe,
         transform=None
     ):
 
-        self.data = pd.read_csv(
-            csv_file
+        self.df = (
+            dataframe
+            .reset_index(drop=True)
         )
 
         self.transform = transform
 
-
     def __len__(self):
 
-        return len(
-            self.data
-        )
-
+        return len(self.df)
 
     def __getitem__(
         self,
         index
     ):
 
-        row = self.data.iloc[
-            index
-        ]
+        row = self.df.iloc[index]
 
-        image_id = row[
-            "image_id"
-        ]
+        image_id = str(
+            row["image_id"]
+        )
 
+        # IMPORTANT:
+        # train.csv contains "class_id"
         label = int(
             row["class_id"]
         )
@@ -173,6 +186,12 @@ class ChestXrayDataset(Dataset):
             IMAGE_DIR
             / f"{image_id}.png"
         )
+
+        if not image_path.exists():
+
+            raise FileNotFoundError(
+                f"Image not found: {image_path}"
+            )
 
         image = Image.open(
             image_path
@@ -191,11 +210,6 @@ class ChestXrayDataset(Dataset):
 # IMAGE TRANSFORMS
 # ============================================================
 
-# Training transformations.
-#
-# These introduce small variations so that the model
-# does not simply memorize the training images.
-
 train_transform = transforms.Compose(
     [
 
@@ -211,7 +225,7 @@ train_transform = transforms.Compose(
         ),
 
         transforms.RandomRotation(
-            degrees=5
+            degrees=7
         ),
 
         transforms.ColorJitter(
@@ -237,9 +251,6 @@ train_transform = transforms.Compose(
     ]
 )
 
-
-# Validation images must NOT receive random
-# augmentation.
 
 val_transform = transforms.Compose(
     [
@@ -271,366 +282,353 @@ val_transform = transforms.Compose(
 
 
 # ============================================================
-# LOAD DATASETS
+# LOAD DATA
 # ============================================================
 
-print("=" * 60)
-print("RESNET-50 TRAINING")
-print("=" * 60)
+def load_data():
 
-print(
-    f"Device : {DEVICE}"
-)
+    print(
+        "\nLoading training CSV..."
+    )
 
-print(
-    f"Epochs : {EPOCHS}"
-)
+    train_df = pd.read_csv(
+        TRAIN_CSV
+    )
 
-print(
-    f"Batch size : {BATCH_SIZE}"
-)
+    print(
+        "Loading validation CSV..."
+    )
 
+    val_df = pd.read_csv(
+        VAL_CSV
+    )
 
-train_csv = (
-    DATA_DIR
-    / "train.csv"
-)
+    print(
+        f"Training images   : "
+        f"{len(train_df)}"
+    )
 
-val_csv = (
-    DATA_DIR
-    / "val.csv"
-)
+    print(
+        f"Validation images : "
+        f"{len(val_df)}"
+    )
 
+    # --------------------------------------------------------
+    # Verify expected columns
+    # --------------------------------------------------------
 
-print(
-    "\nLoading datasets..."
-)
+    required_columns = {
+        "image_id",
+        "project_class",
+        "class_id",
+    }
 
+    missing_train = (
+        required_columns
+        - set(train_df.columns)
+    )
 
-train_dataset = ChestXrayDataset(
-    train_csv,
-    transform=train_transform
-)
+    missing_val = (
+        required_columns
+        - set(val_df.columns)
+    )
 
-val_dataset = ChestXrayDataset(
-    val_csv,
-    transform=val_transform
-)
+    if missing_train:
 
+        raise ValueError(
+            "Training CSV is missing "
+            f"columns: {missing_train}"
+        )
 
-print(
-    f"Training images   : "
-    f"{len(train_dataset)}"
-)
+    if missing_val:
 
-print(
-    f"Validation images : "
-    f"{len(val_dataset)}"
-)
+        raise ValueError(
+            "Validation CSV is missing "
+            f"columns: {missing_val}"
+        )
+
+    print(
+        "\nCSV columns verified:"
+    )
+
+    print(
+        train_df.columns.tolist()
+    )
+
+    return train_df, val_df
 
 
 # ============================================================
 # CLASS DISTRIBUTION
 # ============================================================
 
-train_labels = (
-    train_dataset.data[
-        "class_id"
-    ].tolist()
-)
-
-
-class_counts = (
-    train_dataset.data[
-        "class_id"
-    ]
-    .value_counts()
-    .sort_index()
-)
-
-
-print(
-    "\nTraining class distribution:"
-)
-
-
-for class_id in range(
-    NUM_CLASSES
+def print_class_distribution(
+    train_df,
+    val_df
 ):
 
-    count = int(
-        class_counts.get(
-            class_id,
-            0
-        )
+    print(
+        "\n" + "=" * 60
     )
 
     print(
-        f"{class_id} - "
-        f"{CLASS_NAMES[class_id]}: "
-        f"{count}"
+        "CLASS DISTRIBUTION"
     )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        "\nTraining:"
+    )
+
+    train_counts = (
+        train_df["class_id"]
+        .value_counts()
+        .sort_index()
+    )
+
+    for class_id in range(
+        NUM_CLASSES
+    ):
+
+        count = int(
+            train_counts.get(
+                class_id,
+                0
+            )
+        )
+
+        print(
+            f"{class_id} "
+            f"{CLASS_NAMES[class_id]:<22} "
+            f"{count}"
+        )
+
+    print(
+        "\nValidation:"
+    )
+
+    val_counts = (
+        val_df["class_id"]
+        .value_counts()
+        .sort_index()
+    )
+
+    for class_id in range(
+        NUM_CLASSES
+    ):
+
+        count = int(
+            val_counts.get(
+                class_id,
+                0
+            )
+        )
+
+        print(
+            f"{class_id} "
+            f"{CLASS_NAMES[class_id]:<22} "
+            f"{count}"
+        )
 
 
 # ============================================================
 # WEIGHTED RANDOM SAMPLER
 # ============================================================
 
-print(
-    "\nCreating WeightedRandomSampler..."
-)
-
-
-# Inverse-frequency weighting:
-#
-# Frequent class
-#       ↓
-# smaller weight
-#
-# Rare class
-#       ↓
-# larger weight
-
-class_sample_weights = {}
-
-for class_id in range(
-    NUM_CLASSES
+def create_weighted_sampler(
+    train_df
 ):
 
-    count = class_counts.get(
-        class_id,
-        0
+    print(
+        "\nCreating WeightedRandomSampler..."
     )
 
-    if count > 0:
+    # IMPORTANT:
+    # The CSV column is "class_id".
+    class_counts = (
+        train_df["class_id"]
+        .value_counts()
+        .sort_index()
+    )
 
-        class_sample_weights[
-            class_id
-        ] = 1.0 / count
+    print(
+        "\nTraining class counts:"
+    )
 
-    else:
+    print(
+        class_counts
+    )
 
-        class_sample_weights[
-            class_id
-        ] = 0.0
+    # Inverse-frequency weighting
 
+    class_weights = {}
 
-sample_weights = [
-    class_sample_weights[
-        label
-    ]
-    for label in train_labels
-]
+    for class_id in range(
+        NUM_CLASSES
+    ):
 
+        count = class_counts.get(
+            class_id,
+            0
+        )
 
-sampler = WeightedRandomSampler(
-    weights=sample_weights,
-    num_samples=len(
-        sample_weights
-    ),
-    replacement=True
-)
+        if count > 0:
 
+            class_weights[
+                class_id
+            ] = 1.0 / float(count)
 
-# ============================================================
-# DATALOADERS
-# ============================================================
+        else:
 
-train_loader = DataLoader(
-    train_dataset,
-    batch_size=BATCH_SIZE,
-    sampler=sampler,
-    num_workers=NUM_WORKERS
-)
+            class_weights[
+                class_id
+            ] = 0.0
 
+    sample_weights = []
 
-val_loader = DataLoader(
-    val_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=False,
-    num_workers=NUM_WORKERS
-)
+    for label in train_df[
+        "class_id"
+    ]:
+
+        sample_weights.append(
+            class_weights[
+                int(label)
+            ]
+        )
+
+    sample_weights = torch.tensor(
+        sample_weights,
+        dtype=torch.double
+    )
+
+    sampler = WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(
+            sample_weights
+        ),
+        replacement=True
+    )
+
+    print(
+        "Weighted sampling enabled."
+    )
+
+    return sampler
 
 
 # ============================================================
 # CREATE RESNET-50
 # ============================================================
 
-print(
-    "\nLoading pretrained ResNet-50..."
-)
-
-
-weights = (
-    models.ResNet50_Weights.DEFAULT
-)
-
-
-model = models.resnet50(
-    weights=weights
-)
-
-
-# ImageNet ResNet-50 originally predicts
-# 1000 ImageNet classes.
-#
-# We replace the final layer with:
-#
-# 2048 → 5
-#
-# Our five classes are:
-#
-# 0 Normal
-# 1 Cardiomegaly
-# 2 Pleural effusion
-# 3 Lung Opacity
-# 4 Pulmonary fibrosis
-
-model.fc = nn.Linear(
-    model.fc.in_features,
-    NUM_CLASSES
-)
-
-
-model = model.to(
-    DEVICE
-)
-
-
-print(
-    "ResNet-50 loaded successfully."
-)
-
-
-# ============================================================
-# CLASS-WEIGHTED LOSS
-# ============================================================
-
-print(
-    "\nCreating class-weighted loss..."
-)
-
-
-counts_tensor = torch.tensor(
-    [
-        float(
-            class_counts.get(
-                class_id,
-                0
-            )
-        )
-        for class_id in range(
-            NUM_CLASSES
-        )
-    ],
-    dtype=torch.float32
-)
-
-
-# Inverse-frequency class weights.
-
-class_weights_tensor = (
-    1.0 / counts_tensor
-)
-
-
-# Normalize the weights so their
-# average value is approximately 1.
-
-class_weights_tensor = (
-    class_weights_tensor
-    / class_weights_tensor.mean()
-)
-
-
-class_weights_tensor = (
-    class_weights_tensor.to(
-        DEVICE
-    )
-)
-
-
-print(
-    "\nClass weights:"
-)
-
-
-for class_id in range(
-    NUM_CLASSES
-):
+def create_model():
 
     print(
-        f"{class_id} - "
-        f"{CLASS_NAMES[class_id]}: "
-        f"{class_weights_tensor[class_id].item():.4f}"
+        "\nLoading pretrained ResNet-50..."
     )
 
+    try:
 
-criterion = nn.CrossEntropyLoss(
-    weight=class_weights_tensor
-)
+        weights = (
+            models.ResNet50_Weights.DEFAULT
+        )
+
+        model = models.resnet50(
+            weights=weights
+        )
+
+        print(
+            "Pretrained ImageNet weights loaded."
+        )
+
+    except Exception as error:
+
+        print(
+            "\nWARNING:"
+        )
+
+        print(
+            "Could not load pretrained "
+            "ResNet-50 weights."
+        )
+
+        print(
+            f"Reason: {error}"
+        )
+
+        print(
+            "Using ResNet-50 without "
+            "pretrained weights."
+        )
+
+        model = models.resnet50(
+            weights=None
+        )
+
+    # --------------------------------------------------------
+    # Replace ImageNet classifier
+    #
+    # Original:
+    # 2048 -> 1000
+    #
+    # Ours:
+    # 2048 -> 5
+    # --------------------------------------------------------
+
+    input_features = (
+        model.fc.in_features
+    )
+
+    model.fc = nn.Linear(
+        input_features,
+        NUM_CLASSES
+    )
+
+    return model
 
 
 # ============================================================
-# OPTIMIZER
+# TRAIN ONE EPOCH
 # ============================================================
 
-optimizer = AdamW(
-    model.parameters(),
-    lr=LEARNING_RATE,
-    weight_decay=WEIGHT_DECAY
-)
-
-
-# ============================================================
-# LEARNING RATE SCHEDULER
-# ============================================================
-
-scheduler = ReduceLROnPlateau(
+def train_one_epoch(
+    model,
+    loader,
+    criterion,
     optimizer,
-    mode="min",
-    factor=0.5,
-    patience=1
-)
-
-
-# ============================================================
-# TRAINING FUNCTION
-# ============================================================
-
-def train_one_epoch():
+    device
+):
 
     model.train()
 
     running_loss = 0.0
 
-    all_predictions = []
-
     all_labels = []
 
+    all_predictions = []
+
+    total = 0
 
     for batch_index, (
         images,
         labels
-    ) in enumerate(
-        train_loader
-    ):
+    ) in enumerate(loader):
 
         images = images.to(
-            DEVICE
+            device
         )
 
         labels = labels.to(
-            DEVICE
+            device
         )
 
-
         # ----------------------------------------------------
-        # Clear previous gradients
+        # Clear gradients
         # ----------------------------------------------------
 
         optimizer.zero_grad()
-
 
         # ----------------------------------------------------
         # Forward pass
@@ -640,9 +638,8 @@ def train_one_epoch():
             images
         )
 
-
         # ----------------------------------------------------
-        # Calculate loss
+        # Loss
         # ----------------------------------------------------
 
         loss = criterion(
@@ -650,42 +647,37 @@ def train_one_epoch():
             labels
         )
 
-
         # ----------------------------------------------------
         # Backpropagation
         # ----------------------------------------------------
 
         loss.backward()
 
-
         # ----------------------------------------------------
-        # Update model weights
+        # Update weights
         # ----------------------------------------------------
 
         optimizer.step()
-
 
         # ----------------------------------------------------
         # Statistics
         # ----------------------------------------------------
 
+        batch_size = (
+            images.size(0)
+        )
+
         running_loss += (
             loss.item()
-            * images.size(0)
+            * batch_size
         )
 
+        total += batch_size
 
-        predictions = torch.argmax(
-            outputs,
-            dim=1
-        )
-
-
-        all_predictions.extend(
-            predictions
-            .detach()
-            .cpu()
-            .numpy()
+        predictions = (
+            outputs.argmax(
+                dim=1
+            )
         )
 
         all_labels.extend(
@@ -695,6 +687,16 @@ def train_one_epoch():
             .numpy()
         )
 
+        all_predictions.extend(
+            predictions
+            .detach()
+            .cpu()
+            .numpy()
+        )
+
+        # ----------------------------------------------------
+        # Progress
+        # ----------------------------------------------------
 
         if (
             (batch_index + 1) % 100
@@ -704,15 +706,13 @@ def train_one_epoch():
             print(
                 f"  Batch "
                 f"{batch_index + 1}/"
-                f"{len(train_loader)}"
+                f"{len(loader)}"
             )
-
 
     epoch_loss = (
         running_loss
-        / len(train_dataset)
+        / total
     )
-
 
     epoch_accuracy = (
         accuracy_score(
@@ -720,7 +720,6 @@ def train_one_epoch():
             all_predictions
         )
     )
-
 
     epoch_f1 = (
         f1_score(
@@ -731,7 +730,6 @@ def train_one_epoch():
         )
     )
 
-
     return (
         epoch_loss,
         epoch_accuracy,
@@ -740,59 +738,71 @@ def train_one_epoch():
 
 
 # ============================================================
-# VALIDATION FUNCTION
+# VALIDATION
 # ============================================================
 
-def validate():
+def validate(
+    model,
+    loader,
+    criterion,
+    device
+):
 
     model.eval()
 
     running_loss = 0.0
 
-    all_predictions = []
+    total = 0
 
     all_labels = []
 
-    all_probabilities = []
+    all_predictions = []
 
+    all_probabilities = []
 
     with torch.no_grad():
 
-        for images, labels in (
-            val_loader
-        ):
+        for images, labels in loader:
 
             images = images.to(
-                DEVICE
+                device
             )
 
             labels = labels.to(
-                DEVICE
+                device
             )
 
-
-            # Forward pass.
+            # ------------------------------------------------
+            # Forward pass
+            # ------------------------------------------------
 
             outputs = model(
                 images
             )
 
-
-            # Validation loss.
+            # ------------------------------------------------
+            # Validation loss
+            # ------------------------------------------------
 
             loss = criterion(
                 outputs,
                 labels
             )
 
+            batch_size = (
+                images.size(0)
+            )
 
             running_loss += (
                 loss.item()
-                * images.size(0)
+                * batch_size
             )
 
+            total += batch_size
 
-            # Convert logits into probabilities.
+            # ------------------------------------------------
+            # Probabilities
+            # ------------------------------------------------
 
             probabilities = (
                 torch.softmax(
@@ -801,23 +811,24 @@ def validate():
                 )
             )
 
+            # ------------------------------------------------
+            # Predictions
+            # ------------------------------------------------
 
             predictions = (
-                torch.argmax(
-                    outputs,
+                outputs.argmax(
                     dim=1
                 )
             )
 
-
-            all_predictions.extend(
-                predictions
+            all_labels.extend(
+                labels
                 .cpu()
                 .numpy()
             )
 
-            all_labels.extend(
-                labels
+            all_predictions.extend(
+                predictions
                 .cpu()
                 .numpy()
             )
@@ -828,12 +839,10 @@ def validate():
                 .numpy()
             )
 
-
     epoch_loss = (
         running_loss
-        / len(val_dataset)
+        / total
     )
-
 
     epoch_accuracy = (
         accuracy_score(
@@ -841,7 +850,6 @@ def validate():
             all_predictions
         )
     )
-
 
     epoch_f1 = (
         f1_score(
@@ -852,27 +860,27 @@ def validate():
         )
     )
 
+    # --------------------------------------------------------
+    # AUC-ROC
+    # --------------------------------------------------------
 
     probabilities = np.array(
         all_probabilities
     )
 
-
     labels_array = np.array(
         all_labels
     )
 
-
-    # AUC-ROC requires probabilities
-    # for every class.
-
     try:
 
-        epoch_auc = roc_auc_score(
-            labels_array,
-            probabilities,
-            multi_class="ovr",
-            average="macro"
+        epoch_auc = (
+            roc_auc_score(
+                labels_array,
+                probabilities,
+                multi_class="ovr",
+                average="macro"
+            )
         )
 
     except ValueError:
@@ -880,7 +888,6 @@ def validate():
         epoch_auc = float(
             "nan"
         )
-
 
     return (
         epoch_loss,
@@ -893,212 +900,608 @@ def validate():
 
 
 # ============================================================
-# TRAINING LOOP
+# MAIN
 # ============================================================
 
-best_val_loss = float(
-    "inf"
-)
+def main():
 
-
-print(
-    "\nStarting training..."
-)
-
-
-for epoch in range(
-    1,
-    EPOCHS + 1
-):
+    set_seed()
 
     print(
-        "\n" + "=" * 60
+        "=" * 60
     )
 
     print(
-        f"Epoch {epoch}/{EPOCHS}"
+        "RESNET-50 CLASSIFICATION TRAINING"
     )
 
     print(
         "=" * 60
     )
 
-
-    # --------------------------------------------------------
-    # TRAIN
-    # --------------------------------------------------------
-
-    (
-        train_loss,
-        train_accuracy,
-        train_f1
-    ) = train_one_epoch()
-
-
-    # --------------------------------------------------------
-    # VALIDATE
-    # --------------------------------------------------------
-
-    (
-        val_loss,
-        val_accuracy,
-        val_f1,
-        val_auc,
-        val_labels,
-        val_predictions
-    ) = validate()
-
-
-    # --------------------------------------------------------
-    # Update learning rate
-    # --------------------------------------------------------
-
-    scheduler.step(
-        val_loss
-    )
-
-
-    # --------------------------------------------------------
-    # Print results
-    # --------------------------------------------------------
-
     print(
-        "\nEpoch results:"
+        f"Device       : {DEVICE}"
     )
 
     print(
-        f"Train loss     : "
-        f"{train_loss:.4f}"
+        f"Epochs       : {NUM_EPOCHS}"
     )
 
     print(
-        f"Train accuracy : "
-        f"{train_accuracy:.4f}"
+        f"Batch size   : {BATCH_SIZE}"
     )
 
     print(
-        f"Train F1       : "
-        f"{train_f1:.4f}"
+        f"Image size   : {IMAGE_SIZE}"
     )
 
     print(
-        f"Val loss       : "
-        f"{val_loss:.4f}"
+        f"Train CSV    : {TRAIN_CSV}"
     )
 
     print(
-        f"Val accuracy   : "
-        f"{val_accuracy:.4f}"
+        f"Validation   : {VAL_CSV}"
     )
 
     print(
-        f"Val F1         : "
-        f"{val_f1:.4f}"
+        f"Output       : {OUTPUT_DIR}"
+    )
+
+    # ========================================================
+    # LOAD DATA
+    # ========================================================
+
+    train_df, val_df = load_data()
+
+    print_class_distribution(
+        train_df,
+        val_df
+    )
+
+    # ========================================================
+    # DATASETS
+    # ========================================================
+
+    print(
+        "\nCreating datasets..."
+    )
+
+    train_dataset = (
+        VinBigDataDataset(
+            train_df,
+            transform=train_transform
+        )
+    )
+
+    val_dataset = (
+        VinBigDataDataset(
+            val_df,
+            transform=val_transform
+        )
+    )
+
+    # ========================================================
+    # SAMPLER
+    # ========================================================
+
+    sampler = (
+        create_weighted_sampler(
+            train_df
+        )
+    )
+
+    # ========================================================
+    # DATALOADERS
+    # ========================================================
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=BATCH_SIZE,
+        sampler=sampler,
+        num_workers=0
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=0
+    )
+
+    # ========================================================
+    # MODEL
+    # ========================================================
+
+    model = create_model()
+
+    model = model.to(
+        DEVICE
     )
 
     print(
-        f"Val AUC-ROC    : "
-        f"{val_auc:.4f}"
+        "ResNet-50 model ready."
     )
 
+    # ========================================================
+    # CLASS-WEIGHTED LOSS
+    # ========================================================
 
-    # --------------------------------------------------------
-    # Save best checkpoint
-    # --------------------------------------------------------
+    print(
+        "\nCreating class-weighted loss..."
+    )
 
-    if val_loss < best_val_loss:
+    class_counts = (
+        train_df["class_id"]
+        .value_counts()
+        .sort_index()
+    )
 
-        best_val_loss = val_loss
+    class_weights = []
 
+    for class_id in range(
+        NUM_CLASSES
+    ):
 
-        torch.save(
+        count = class_counts.get(
+            class_id,
+            0
+        )
+
+        if count > 0:
+
+            class_weights.append(
+                1.0 / float(count)
+            )
+
+        else:
+
+            class_weights.append(
+                0.0
+            )
+
+    class_weights = torch.tensor(
+        class_weights,
+        dtype=torch.float32
+    )
+
+    # Normalize average weight to 1
+
+    nonzero_weights = (
+        class_weights[
+            class_weights > 0
+        ]
+    )
+
+    if len(nonzero_weights) > 0:
+
+        class_weights = (
+            class_weights
+            / nonzero_weights.mean()
+        )
+
+    class_weights = (
+        class_weights.to(
+            DEVICE
+        )
+    )
+
+    print(
+        "\nClass weights:"
+    )
+
+    for class_id in range(
+        NUM_CLASSES
+    ):
+
+        print(
+            f"{class_id} - "
+            f"{CLASS_NAMES[class_id]}: "
+            f"{class_weights[class_id].item():.4f}"
+        )
+
+    criterion = (
+        nn.CrossEntropyLoss(
+            weight=class_weights
+        )
+    )
+
+    # ========================================================
+    # OPTIMIZER
+    # ========================================================
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=LEARNING_RATE,
+        weight_decay=WEIGHT_DECAY
+    )
+
+    # ========================================================
+    # LR SCHEDULER
+    # ========================================================
+
+    scheduler = (
+        torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=1
+        )
+    )
+
+    # ========================================================
+    # TRAINING LOOP
+    # ========================================================
+
+    best_val_loss = float(
+        "inf"
+    )
+
+    best_val_accuracy = 0.0
+
+    history = []
+
+    final_labels = None
+
+    final_predictions = None
+
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        "STARTING TRAINING"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    for epoch in range(
+        1,
+        NUM_EPOCHS + 1
+    ):
+
+        print(
+            "\n" + "=" * 60
+        )
+
+        print(
+            f"Epoch {epoch}/{NUM_EPOCHS}"
+        )
+
+        print(
+            "=" * 60
+        )
+
+        # ----------------------------------------------------
+        # TRAIN
+        # ----------------------------------------------------
+
+        (
+            train_loss,
+            train_accuracy,
+            train_f1
+        ) = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            DEVICE
+        )
+
+        # ----------------------------------------------------
+        # VALIDATE
+        # ----------------------------------------------------
+
+        (
+            val_loss,
+            val_accuracy,
+            val_f1,
+            val_auc,
+            val_labels,
+            val_predictions
+        ) = validate(
+            model,
+            val_loader,
+            criterion,
+            DEVICE
+        )
+
+        final_labels = (
+            val_labels
+        )
+
+        final_predictions = (
+            val_predictions
+        )
+
+        # ----------------------------------------------------
+        # Scheduler
+        # ----------------------------------------------------
+
+        scheduler.step(
+            val_loss
+        )
+
+        current_lr = (
+            optimizer.param_groups[0]["lr"]
+        )
+
+        # ----------------------------------------------------
+        # Results
+        # ----------------------------------------------------
+
+        print(
+            "\nEpoch results:"
+        )
+
+        print(
+            f"Train loss     : "
+            f"{train_loss:.4f}"
+        )
+
+        print(
+            f"Train accuracy : "
+            f"{train_accuracy:.4f}"
+        )
+
+        print(
+            f"Train F1       : "
+            f"{train_f1:.4f}"
+        )
+
+        print(
+            f"Val loss       : "
+            f"{val_loss:.4f}"
+        )
+
+        print(
+            f"Val accuracy   : "
+            f"{val_accuracy:.4f}"
+        )
+
+        print(
+            f"Val F1         : "
+            f"{val_f1:.4f}"
+        )
+
+        print(
+            f"Val AUC-ROC    : "
+            f"{val_auc:.4f}"
+        )
+
+        print(
+            f"Learning rate  : "
+            f"{current_lr:.6f}"
+        )
+
+        # ----------------------------------------------------
+        # History
+        # ----------------------------------------------------
+
+        history.append(
             {
                 "epoch": epoch,
+                "train_loss": train_loss,
+                "train_accuracy": train_accuracy,
+                "train_f1": train_f1,
+                "val_loss": val_loss,
+                "val_accuracy": val_accuracy,
+                "val_f1": val_f1,
+                "val_auc": (
+                    None
+                    if np.isnan(val_auc)
+                    else val_auc
+                ),
+                "learning_rate": current_lr,
+            }
+        )
 
-                "model_state_dict":
-                    model.state_dict(),
+        # ----------------------------------------------------
+        # Save best checkpoint
+        # ----------------------------------------------------
 
-                "optimizer_state_dict":
-                    optimizer.state_dict(),
+        if val_loss < best_val_loss:
 
-                "val_loss":
-                    val_loss,
+            best_val_loss = (
+                val_loss
+            )
 
-                "val_accuracy":
-                    val_accuracy,
+            best_val_accuracy = (
+                val_accuracy
+            )
 
-                "val_f1":
-                    val_f1,
+            torch.save(
+                {
+                    "epoch": epoch,
 
-                "val_auc":
-                    val_auc,
+                    "model_state_dict":
+                        model.state_dict(),
 
-                "class_names":
-                    CLASS_NAMES,
+                    "optimizer_state_dict":
+                        optimizer.state_dict(),
 
+                    "val_loss":
+                        val_loss,
+
+                    "val_accuracy":
+                        val_accuracy,
+
+                    "val_f1":
+                        val_f1,
+
+                    "val_auc":
+                        val_auc,
+
+                    "class_names":
+                        CLASS_NAMES,
+
+                },
+                BEST_MODEL_PATH
+            )
+
+            print(
+                "\nBest model saved:"
+            )
+
+            print(
+                BEST_MODEL_PATH
+            )
+
+    # ========================================================
+    # CONFUSION MATRIX
+    # ========================================================
+
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        "VALIDATION CONFUSION MATRIX"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    cm = confusion_matrix(
+        final_labels,
+        final_predictions,
+        labels=list(
+            range(NUM_CLASSES)
+        )
+    )
+
+    print(cm)
+
+    np.save(
+        CONFUSION_MATRIX_PATH,
+        cm
+    )
+
+    # ========================================================
+    # SAVE FINAL MODEL
+    # ========================================================
+
+    torch.save(
+        {
+            "model_state_dict":
+                model.state_dict(),
+
+            "class_names":
+                CLASS_NAMES,
+
+            "num_classes":
+                NUM_CLASSES,
+
+            "image_size":
+                IMAGE_SIZE,
+
+        },
+        FINAL_MODEL_PATH
+    )
+
+    # ========================================================
+    # SAVE TRAINING HISTORY
+    # ========================================================
+
+    with open(
+        HISTORY_PATH,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            history,
+            file,
+            indent=4
+        )
+
+    # ========================================================
+    # SAVE CLASS NAMES
+    # ========================================================
+
+    with open(
+        CLASS_NAMES_PATH,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            {
+                str(i): name
+                for i, name
+                in enumerate(
+                    CLASS_NAMES
+                )
             },
-            CHECKPOINT_PATH
+            file,
+            indent=4
         )
 
+    # ========================================================
+    # FINAL SUMMARY
+    # ========================================================
 
-        print(
-            "\nBest model saved:"
-        )
+    print(
+        "\n" + "=" * 60
+    )
 
-        print(
-            CHECKPOINT_PATH
-        )
+    print(
+        "RESNET-50 TRAINING COMPLETED"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        f"Best validation loss : "
+        f"{best_val_loss:.4f}"
+    )
+
+    print(
+        f"Best validation accuracy : "
+        f"{best_val_accuracy:.4f}"
+    )
+
+    print(
+        f"\nBest model:"
+    )
+
+    print(
+        BEST_MODEL_PATH
+    )
+
+    print(
+        f"\nFinal model:"
+    )
+
+    print(
+        FINAL_MODEL_PATH
+    )
+
+    print(
+        f"\nTraining history:"
+    )
+
+    print(
+        HISTORY_PATH
+    )
+
+    print(
+        f"\nConfusion matrix:"
+    )
+
+    print(
+        CONFUSION_MATRIX_PATH
+    )
 
 
 # ============================================================
-# CONFUSION MATRIX
+# ENTRY POINT
 # ============================================================
 
-print(
-    "\n" + "=" * 60
-)
+if __name__ == "__main__":
 
-print(
-    "VALIDATION CONFUSION MATRIX"
-)
-
-print(
-    "=" * 60
-)
-
-
-cm = confusion_matrix(
-    val_labels,
-    val_predictions
-)
-
-
-print(cm)
-
-
-# ============================================================
-# FINAL SUMMARY
-# ============================================================
-
-print(
-    "\n" + "=" * 60
-)
-
-print(
-    "RESNET-50 TRAINING COMPLETED"
-)
-
-print(
-    "=" * 60
-)
-
-
-print(
-    f"Best validation loss : "
-    f"{best_val_loss:.4f}"
-)
-
-print(
-    f"Checkpoint           : "
-    f"{CHECKPOINT_PATH}"
-)
+    main()

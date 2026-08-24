@@ -1,31 +1,22 @@
-import os
-
+from pathlib import Path
 import json
 
+import numpy as np
+import pandas as pd
 import torch
-
 import torch.nn as nn
 
-from torch.utils.data import Dataset, DataLoader
-
-from torchvision import models, transforms
-
 from PIL import Image
-
-import pandas as pd
-
-import numpy as np
-
-import matplotlib
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
+from torch.utils.data import Dataset, DataLoader
+from torchvision import models, transforms
 
 from sklearn.metrics import (
     accuracy_score,
+    precision_score,
+    recall_score,
     f1_score,
-    roc_auc_score,
     confusion_matrix,
+    roc_auc_score,
     classification_report,
 )
 
@@ -34,47 +25,48 @@ from sklearn.metrics import (
 # PATHS
 # ============================================================
 
-PROJECT_ROOT = os.path.abspath(
-    os.path.join(
-        os.path.dirname(__file__),
-        "..",
-        ".."
-    )
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+# Classification dataset
+DATA_DIR = (
+    PROJECT_ROOT
+    / "data"
+    / "processed"
+    / "classification"
+    / "resnet50"
 )
 
-# Test CSV
-TEST_CSV = os.path.join(
-    PROJECT_ROOT,
-    "data",
-    "processed",
-    "classification",
-    "test.csv"
+TRAIN_CSV = DATA_DIR / "train.csv"
+VAL_CSV = DATA_DIR / "val.csv"
+
+# Original VinBigData images
+IMAGE_DIR = (
+    PROJECT_ROOT
+    / "data"
+    / "raw"
+    / "vinbigdata"
+    / "train"
 )
 
-# IMPORTANT:
-# Training script uses images from the original VinBigData
-# training image directory.
-IMAGE_DIR = os.path.join(
-    PROJECT_ROOT,
-    "data",
-    "raw",
-    "vinbigdata",
-    "train"
+# Trained model
+MODEL_DIR = (
+    PROJECT_ROOT
+    / "outputs"
+    / "classification"
+    / "resnet50"
 )
 
-# ResNet-50 checkpoint
-CHECKPOINT = os.path.join(
-    PROJECT_ROOT,
-    "outputs",
-    "classification",
-    "resnet50_best.pth"
+MODEL_PATH = MODEL_DIR / "best_model.pth"
+
+# Evaluation output
+OUTPUT_DIR = (
+    MODEL_DIR
+    / "evaluation"
 )
 
-# Output directory
-OUTPUT_DIR = os.path.join(
-    PROJECT_ROOT,
-    "outputs",
-    "classification"
+OUTPUT_DIR.mkdir(
+    parents=True,
+    exist_ok=True
 )
 
 
@@ -82,8 +74,6 @@ OUTPUT_DIR = os.path.join(
 # CONFIGURATION
 # ============================================================
 
-IMAGE_SIZE = 224
-BATCH_SIZE = 8
 NUM_CLASSES = 5
 
 CLASS_NAMES = [
@@ -94,72 +84,47 @@ CLASS_NAMES = [
     "Pulmonary fibrosis",
 ]
 
+IMAGE_SIZE = 224
 
-# ============================================================
-# DEVICE
-# ============================================================
+BATCH_SIZE = 16
 
-device = torch.device(
-    "cuda" if torch.cuda.is_available() else "cpu"
+NUM_WORKERS = 0
+
+DEVICE = torch.device(
+    "cuda"
+    if torch.cuda.is_available()
+    else "cpu"
 )
-
-
-# ============================================================
-# HEADER
-# ============================================================
-
-print("=" * 60)
-print("RESNET-50 TEST EVALUATION")
-print("=" * 60)
-
-print(f"Device     : {device}")
-print(f"Test CSV   : {TEST_CSV}")
-print(f"Image Dir  : {IMAGE_DIR}")
-print(f"Checkpoint : {CHECKPOINT}")
-
-
-# ============================================================
-# PATH VALIDATION
-# ============================================================
-
-print("\nChecking paths...")
-
-if not os.path.exists(TEST_CSV):
-    raise FileNotFoundError(
-        f"Test CSV not found:\n{TEST_CSV}"
-    )
-
-if not os.path.isdir(IMAGE_DIR):
-    raise FileNotFoundError(
-        f"Image directory not found:\n{IMAGE_DIR}"
-    )
-
-if not os.path.exists(CHECKPOINT):
-    raise FileNotFoundError(
-        f"ResNet-50 checkpoint not found:\n{CHECKPOINT}"
-    )
-
-print("All required paths found.")
 
 
 # ============================================================
 # DATASET
 # ============================================================
 
-class XRayDataset(Dataset):
+class VinBigDataDataset(Dataset):
 
-    def __init__(self, dataframe, transform=None):
+    def __init__(
+        self,
+        dataframe,
+        transform=None
+    ):
 
-        self.dataframe = dataframe.reset_index(drop=True)
+        self.df = dataframe.reset_index(
+            drop=True
+        )
+
         self.transform = transform
 
     def __len__(self):
 
-        return len(self.dataframe)
+        return len(self.df)
 
-    def __getitem__(self, index):
+    def __getitem__(
+        self,
+        index
+    ):
 
-        row = self.dataframe.iloc[index]
+        row = self.df.iloc[index]
 
         image_id = str(
             row["image_id"]
@@ -169,18 +134,16 @@ class XRayDataset(Dataset):
             row["class_id"]
         )
 
-        image_path = os.path.join(
-            IMAGE_DIR,
-            f"{image_id}.png"
+        image_path = (
+            IMAGE_DIR
+            / f"{image_id}.png"
         )
 
-        # Give a clear error if a particular image is missing
-        if not os.path.exists(image_path):
+        if not image_path.exists():
+
             raise FileNotFoundError(
-                f"\nImage not found:\n{image_path}\n"
-                f"Image ID: {image_id}\n"
-                f"Check that the VinBigData train images "
-                f"are present in:\n{IMAGE_DIR}"
+                f"Image not found:\n"
+                f"{image_path}"
             )
 
         image = Image.open(
@@ -197,630 +160,987 @@ class XRayDataset(Dataset):
 
 
 # ============================================================
-# LOAD TEST DATA
+# VALIDATION TRANSFORM
 # ============================================================
 
-print("\nLoading test dataset...")
+val_transform = transforms.Compose(
+    [
 
-test_df = pd.read_csv(
-    TEST_CSV
+        transforms.Resize(
+            (
+                IMAGE_SIZE,
+                IMAGE_SIZE
+            )
+        ),
+
+        transforms.ToTensor(),
+
+        transforms.Normalize(
+            mean=[
+                0.485,
+                0.456,
+                0.406
+            ],
+            std=[
+                0.229,
+                0.224,
+                0.225
+            ]
+        ),
+
+    ]
 )
 
-print(
-    f"Test images : {len(test_df)}"
-)
-
 
 # ============================================================
-# VALIDATE CSV COLUMNS
+# LOAD MODEL
 # ============================================================
 
-required_columns = [
-    "image_id",
-    "class_id",
-]
+def load_model():
 
-missing_columns = [
-    column
-    for column in required_columns
-    if column not in test_df.columns
-]
-
-if missing_columns:
-
-    raise ValueError(
-        "Required columns missing from test.csv: "
-        + ", ".join(missing_columns)
+    print(
+        "\nLoading ResNet-50 architecture..."
     )
 
+    # Do NOT download ImageNet weights again.
+    # The trained checkpoint contains our trained model weights.
 
-# ============================================================
-# TEST CLASS DISTRIBUTION
-# ============================================================
+    model = models.resnet50(
+        weights=None
+    )
 
-print("\nTest class distribution:")
+    # Replace ImageNet's 1000-class output
+    # with our 5 project classes.
 
-for class_id, class_name in enumerate(
-    CLASS_NAMES
-):
-
-    count = int(
-        (
-            test_df["class_id"]
-            == class_id
-        ).sum()
+    model.fc = nn.Linear(
+        model.fc.in_features,
+        NUM_CLASSES
     )
 
     print(
-        f"{class_id} - "
-        f"{class_name}: "
-        f"{count}"
+        f"Loading checkpoint:\n"
+        f"{MODEL_PATH}"
     )
 
-
-# ============================================================
-# CHECK TEST IMAGES BEFORE EVALUATION
-# ============================================================
-
-print("\nChecking test image files...")
-
-missing_images = []
-
-for image_id in test_df["image_id"]:
-
-    image_path = os.path.join(
-        IMAGE_DIR,
-        f"{image_id}.png"
+    checkpoint = torch.load(
+        MODEL_PATH,
+        map_location=DEVICE
     )
 
-    if not os.path.exists(image_path):
+    # The training script saves:
+    #
+    # {
+    #     "epoch": ...,
+    #     "model_state_dict": ...,
+    #     "optimizer_state_dict": ...,
+    #     ...
+    # }
 
-        missing_images.append(
-            image_id
+    if (
+        isinstance(checkpoint, dict)
+        and "model_state_dict" in checkpoint
+    ):
+
+        model.load_state_dict(
+            checkpoint[
+                "model_state_dict"
+            ]
         )
 
-if missing_images:
+    else:
+
+        # Fallback for a plain state_dict.
+        model.load_state_dict(
+            checkpoint
+        )
+
+    model = model.to(
+        DEVICE
+    )
+
+    model.eval()
 
     print(
-        f"\nERROR: {len(missing_images)} "
-        f"test images were not found."
+        "ResNet-50 checkpoint loaded successfully."
     )
 
-    print("\nFirst missing images:")
-
-    for image_id in missing_images[:10]:
-
-        print(
-            f"  {image_id}.png"
-        )
-
-    raise FileNotFoundError(
-        "\nSome test images are missing. "
-        "Evaluation cannot continue."
-    )
-
-print(
-    f"All {len(test_df)} test images found."
-)
-
-
-# ============================================================
-# IMAGE TRANSFORMATION
-# ============================================================
-
-test_transform = transforms.Compose([
-
-    transforms.Resize(
-        (IMAGE_SIZE, IMAGE_SIZE)
-    ),
-
-    transforms.ToTensor(),
-
-    transforms.Normalize(
-        mean=[
-            0.485,
-            0.456,
-            0.406
-        ],
-        std=[
-            0.229,
-            0.224,
-            0.225
-        ]
-    ),
-])
-
-
-# ============================================================
-# CREATE DATASET
-# ============================================================
-
-test_dataset = XRayDataset(
-    test_df,
-    transform=test_transform
-)
-
-
-# ============================================================
-# CREATE DATALOADER
-# ============================================================
-
-test_loader = DataLoader(
-    test_dataset,
-    batch_size=BATCH_SIZE,
-    shuffle=False,
-    num_workers=0
-)
-
-
-# ============================================================
-# LOAD RESNET-50
-# ============================================================
-
-print("\nLoading ResNet-50...")
-
-model = models.resnet50(
-    weights=None
-)
-
-model.fc = nn.Linear(
-    model.fc.in_features,
-    NUM_CLASSES
-)
-
-
-# ============================================================
-# LOAD CHECKPOINT
-# ============================================================
-
-print("Loading checkpoint...")
-
-checkpoint = torch.load(
-    CHECKPOINT,
-    map_location=device
-)
-
-if (
-    isinstance(checkpoint, dict)
-    and "model_state_dict" in checkpoint
-):
-
-    model.load_state_dict(
-        checkpoint[
-            "model_state_dict"
-        ]
-    )
-
-else:
-
-    model.load_state_dict(
-        checkpoint
-    )
-
-
-# ============================================================
-# MOVE MODEL TO DEVICE
-# ============================================================
-
-model = model.to(device)
-
-model.eval()
-
-print(
-    "Model loaded successfully."
-)
+    return model, checkpoint
 
 
 # ============================================================
 # EVALUATION
 # ============================================================
 
-print(
-    "\nRunning test evaluation..."
-)
+def evaluate(
+    model,
+    loader
+):
 
-all_labels = []
-all_predictions = []
-all_probabilities = []
+    model.eval()
 
+    all_labels = []
 
-with torch.no_grad():
+    all_predictions = []
 
-    for batch_idx, (
-        images,
-        labels
-    ) in enumerate(test_loader):
+    all_probabilities = []
 
-        images = images.to(
-            device
-        )
+    print(
+        "\nRunning validation evaluation..."
+    )
 
-        outputs = model(
-            images
-        )
+    with torch.no_grad():
 
-        probabilities = torch.softmax(
-            outputs,
-            dim=1
-        )
+        for batch_index, (
+            images,
+            labels
+        ) in enumerate(loader):
 
-        predictions = torch.argmax(
-            probabilities,
-            dim=1
-        )
-
-        all_labels.extend(
-            labels.numpy()
-        )
-
-        all_predictions.extend(
-            predictions
-            .cpu()
-            .numpy()
-        )
-
-        all_probabilities.extend(
-            probabilities
-            .cpu()
-            .numpy()
-        )
-
-        if (
-            batch_idx + 1
-        ) % 20 == 0:
-
-            print(
-                f"  Batch "
-                f"{batch_idx + 1}/"
-                f"{len(test_loader)}"
+            images = images.to(
+                DEVICE
             )
 
+            labels = labels.to(
+                DEVICE
+            )
 
-# ============================================================
-# CONVERT TO NUMPY
-# ============================================================
+            # Forward pass
+            outputs = model(
+                images
+            )
 
-all_labels = np.array(
-    all_labels
-)
+            # Convert logits to probabilities
+            probabilities = torch.softmax(
+                outputs,
+                dim=1
+            )
 
-all_predictions = np.array(
-    all_predictions
-)
+            # Select highest-probability class
+            predictions = torch.argmax(
+                outputs,
+                dim=1
+            )
 
-all_probabilities = np.array(
-    all_probabilities
-)
+            all_labels.extend(
+                labels
+                .cpu()
+                .numpy()
+                .tolist()
+            )
 
+            all_predictions.extend(
+                predictions
+                .cpu()
+                .numpy()
+                .tolist()
+            )
 
-# ============================================================
-# METRICS
-# ============================================================
+            all_probabilities.extend(
+                probabilities
+                .cpu()
+                .numpy()
+                .tolist()
+            )
 
-accuracy = accuracy_score(
-    all_labels,
-    all_predictions
-)
+            if (
+                (batch_index + 1) % 50
+                == 0
+            ):
 
-macro_f1 = f1_score(
-    all_labels,
-    all_predictions,
-    average="macro",
-    zero_division=0
-)
+                print(
+                    f"  Batch "
+                    f"{batch_index + 1}/"
+                    f"{len(loader)}"
+                )
 
-
-# ============================================================
-# AUC-ROC
-# ============================================================
-
-try:
-
-    auc_roc = roc_auc_score(
-        all_labels,
-        all_probabilities,
-        multi_class="ovr",
-        average="macro"
-    )
-
-except ValueError:
-
-    auc_roc = None
-
-
-# ============================================================
-# CONFUSION MATRIX
-# ============================================================
-
-cm = confusion_matrix(
-    all_labels,
-    all_predictions,
-    labels=list(
-        range(NUM_CLASSES)
-    )
-)
-
-
-# ============================================================
-# CLASSIFICATION REPORT
-# ============================================================
-
-report = classification_report(
-    all_labels,
-    all_predictions,
-    labels=list(
-        range(NUM_CLASSES)
-    ),
-    target_names=CLASS_NAMES,
-    output_dict=True,
-    zero_division=0
-)
-
-
-# ============================================================
-# PRINT RESULTS
-# ============================================================
-
-print(
-    "\n" + "=" * 60
-)
-
-print(
-    "TEST RESULTS"
-)
-
-print(
-    "=" * 60
-)
-
-print(
-    f"Accuracy : {accuracy:.4f}"
-)
-
-print(
-    f"Macro F1 : {macro_f1:.4f}"
-)
-
-if auc_roc is not None:
-
-    print(
-        f"AUC-ROC  : {auc_roc:.4f}"
-    )
-
-else:
-
-    print(
-        "AUC-ROC  : "
-        "Could not be calculated"
+    return (
+        np.array(all_labels),
+        np.array(all_predictions),
+        np.array(all_probabilities)
     )
 
 
 # ============================================================
-# CONFUSION MATRIX
+# OVERALL METRICS
 # ============================================================
 
-print(
-    "\nConfusion Matrix:"
-)
+def calculate_metrics(
+    labels,
+    predictions,
+    probabilities
+):
 
-print(cm)
+    accuracy = accuracy_score(
+        labels,
+        predictions
+    )
+
+    precision = precision_score(
+        labels,
+        predictions,
+        average="macro",
+        zero_division=0
+    )
+
+    recall = recall_score(
+        labels,
+        predictions,
+        average="macro",
+        zero_division=0
+    )
+
+    f1 = f1_score(
+        labels,
+        predictions,
+        average="macro",
+        zero_division=0
+    )
+
+    # Multiclass one-vs-rest AUC
+    try:
+
+        auc = roc_auc_score(
+            labels,
+            probabilities,
+            multi_class="ovr",
+            average="macro"
+        )
+
+    except ValueError:
+
+        auc = float("nan")
+
+    return {
+        "accuracy": float(
+            accuracy
+        ),
+        "macro_precision": float(
+            precision
+        ),
+        "macro_recall": float(
+            recall
+        ),
+        "macro_f1": float(
+            f1
+        ),
+        "macro_auc_roc": float(
+            auc
+        ),
+    }
 
 
 # ============================================================
 # PER-CLASS METRICS
 # ============================================================
 
-print(
-    "\nPer-class metrics:"
-)
+def calculate_per_class_metrics(
+    labels,
+    predictions
+):
 
-for class_name in CLASS_NAMES:
+    precision = precision_score(
+        labels,
+        predictions,
+        labels=list(
+            range(NUM_CLASSES)
+        ),
+        average=None,
+        zero_division=0
+    )
 
-    precision = report[
-        class_name
-    ]["precision"]
+    recall = recall_score(
+        labels,
+        predictions,
+        labels=list(
+            range(NUM_CLASSES)
+        ),
+        average=None,
+        zero_division=0
+    )
 
-    recall = report[
-        class_name
-    ]["recall"]
+    f1 = f1_score(
+        labels,
+        predictions,
+        labels=list(
+            range(NUM_CLASSES)
+        ),
+        average=None,
+        zero_division=0
+    )
 
-    f1 = report[
-        class_name
-    ]["f1-score"]
+    results = {}
 
-    print(
-        f"{class_name}: "
-        f"Precision={precision:.4f}, "
-        f"Recall={recall:.4f}, "
-        f"F1={f1:.4f}"
+    for class_id in range(
+        NUM_CLASSES
+    ):
+
+        results[
+            CLASS_NAMES[class_id]
+        ] = {
+            "class_id": class_id,
+            "precision": float(
+                precision[class_id]
+            ),
+            "recall": float(
+                recall[class_id]
+            ),
+            "f1": float(
+                f1[class_id]
+            ),
+        }
+
+    return results
+
+
+# ============================================================
+# CONFUSION MATRIX
+# ============================================================
+
+def create_confusion_matrix(
+    labels,
+    predictions
+):
+
+    return confusion_matrix(
+        labels,
+        predictions,
+        labels=list(
+            range(NUM_CLASSES)
+        )
     )
 
 
 # ============================================================
-# CREATE OUTPUT DIRECTORY
+# SAVE CONFUSION MATRIX
 # ============================================================
 
-os.makedirs(
-    OUTPUT_DIR,
-    exist_ok=True
-)
+def save_confusion_matrix(
+    cm
+):
 
-
-# ============================================================
-# SAVE TEST METRICS
-# ============================================================
-
-metrics = {
-
-    "accuracy": float(
-        accuracy
-    ),
-
-    "macro_f1": float(
-        macro_f1
-    ),
-
-    "auc_roc": (
-        float(auc_roc)
-        if auc_roc is not None
-        else None
-    ),
-
-    "test_samples": int(
-        len(test_df)
-    ),
-
-    "num_classes": NUM_CLASSES,
-
-    "class_names": CLASS_NAMES,
-
-    "confusion_matrix": cm.tolist()
-}
-
-
-metrics_path = os.path.join(
-    OUTPUT_DIR,
-    "test_metrics.json"
-)
-
-
-with open(
-    metrics_path,
-    "w"
-) as f:
-
-    json.dump(
-        metrics,
-        f,
-        indent=4
+    output_path = (
+        OUTPUT_DIR
+        / "confusion_matrix.npy"
     )
+
+    np.save(
+        output_path,
+        cm
+    )
+
+    return output_path
 
 
 # ============================================================
 # SAVE CLASSIFICATION REPORT
 # ============================================================
 
-report_df = pd.DataFrame(
-    report
-).transpose()
-
-
-report_path = os.path.join(
-    OUTPUT_DIR,
-    "classification_report.csv"
-)
-
-
-report_df.to_csv(
-    report_path
-)
-
-
-# ============================================================
-# SAVE CONFUSION MATRIX IMAGE
-# ============================================================
-
-plt.figure(
-    figsize=(8, 6)
-)
-
-plt.imshow(
-    cm
-)
-
-plt.title(
-    "ResNet-50 Test Confusion Matrix"
-)
-
-plt.colorbar()
-
-plt.xticks(
-    range(NUM_CLASSES),
-    CLASS_NAMES,
-    rotation=45,
-    ha="right"
-)
-
-plt.yticks(
-    range(NUM_CLASSES),
-    CLASS_NAMES
-)
-
-plt.xlabel(
-    "Predicted Class"
-)
-
-plt.ylabel(
-    "True Class"
-)
-
-
-for i in range(
-    NUM_CLASSES
+def save_classification_report(
+    labels,
+    predictions
 ):
 
-    for j in range(
+    report = classification_report(
+        labels,
+        predictions,
+        labels=list(
+            range(NUM_CLASSES)
+        ),
+        target_names=CLASS_NAMES,
+        zero_division=0
+    )
+
+    output_path = (
+        OUTPUT_DIR
+        / "classification_report.txt"
+    )
+
+    with open(
+        output_path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        file.write(
+            report
+        )
+
+    return (
+        report,
+        output_path
+    )
+
+
+# ============================================================
+# SAVE SUMMARY JSON
+# ============================================================
+
+def save_summary(
+    metrics,
+    per_class_metrics,
+    checkpoint
+):
+
+    summary = {
+
+        "model": "ResNet-50",
+
+        "checkpoint": str(
+            MODEL_PATH
+        ),
+
+        "validation_csv": str(
+            VAL_CSV
+        ),
+
+        "image_directory": str(
+            IMAGE_DIR
+        ),
+
+        "device": str(
+            DEVICE
+        ),
+
+        "num_validation_images": None,
+
+        "num_classes": NUM_CLASSES,
+
+        "class_names": CLASS_NAMES,
+
+        "overall_metrics": metrics,
+
+        "per_class_metrics": per_class_metrics,
+
+    }
+
+    # Save training checkpoint metadata
+    if isinstance(
+        checkpoint,
+        dict
+    ):
+
+        if "epoch" in checkpoint:
+
+            summary[
+                "checkpoint_epoch"
+            ] = checkpoint[
+                "epoch"
+            ]
+
+        if "val_accuracy" in checkpoint:
+
+            summary[
+                "checkpoint_val_accuracy"
+            ] = checkpoint[
+                "val_accuracy"
+            ]
+
+        if "val_f1" in checkpoint:
+
+            summary[
+                "checkpoint_val_f1"
+            ] = checkpoint[
+                "val_f1"
+            ]
+
+        if "val_auc" in checkpoint:
+
+            summary[
+                "checkpoint_val_auc"
+            ] = checkpoint[
+                "val_auc"
+            ]
+
+    output_path = (
+        OUTPUT_DIR
+        / "evaluation_summary.json"
+    )
+
+    with open(
+        output_path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            summary,
+            file,
+            indent=4
+        )
+
+    return output_path
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    print("=" * 60)
+
+    print(
+        "RESNET-50 CLASSIFICATION EVALUATION"
+    )
+
+    print("=" * 60)
+
+    print(
+        f"Device       : {DEVICE}"
+    )
+
+    print(
+        f"Validation   : {VAL_CSV}"
+    )
+
+    print(
+        f"Images       : {IMAGE_DIR}"
+    )
+
+    print(
+        f"Model        : {MODEL_PATH}"
+    )
+
+    print(
+        f"Output       : {OUTPUT_DIR}"
+    )
+
+    # ========================================================
+    # CHECK REQUIRED FILES
+    # ========================================================
+
+    if not VAL_CSV.exists():
+
+        raise FileNotFoundError(
+            f"\nValidation CSV not found:\n"
+            f"{VAL_CSV}"
+        )
+
+    if not IMAGE_DIR.exists():
+
+        raise FileNotFoundError(
+            f"\nImage directory not found:\n"
+            f"{IMAGE_DIR}"
+        )
+
+    if not MODEL_PATH.exists():
+
+        raise FileNotFoundError(
+            f"\nResNet-50 checkpoint not found:\n"
+            f"{MODEL_PATH}"
+        )
+
+    # ========================================================
+    # LOAD VALIDATION CSV
+    # ========================================================
+
+    print(
+        "\nLoading validation CSV..."
+    )
+
+    val_df = pd.read_csv(
+        VAL_CSV
+    )
+
+    print(
+        f"Validation images : "
+        f"{len(val_df)}"
+    )
+
+    print(
+        "\nCSV columns:"
+    )
+
+    print(
+        val_df.columns.tolist()
+    )
+
+    # Your actual CSV format is:
+    #
+    # image_id
+    # project_class
+    # class_id
+
+    required_columns = {
+        "image_id",
+        "project_class",
+        "class_id",
+    }
+
+    missing_columns = (
+        required_columns
+        - set(val_df.columns)
+    )
+
+    if missing_columns:
+
+        raise ValueError(
+            "\nMissing required columns: "
+            f"{sorted(missing_columns)}"
+        )
+
+    # ========================================================
+    # CHECK IMAGE FILES
+    # ========================================================
+
+    print(
+        "\nChecking validation images..."
+    )
+
+    missing_images = []
+
+    for image_id in val_df[
+        "image_id"
+    ]:
+
+        image_path = (
+            IMAGE_DIR
+            / f"{image_id}.png"
+        )
+
+        if not image_path.exists():
+
+            missing_images.append(
+                str(image_path)
+            )
+
+    if missing_images:
+
+        print(
+            f"Missing images: "
+            f"{len(missing_images)}"
+        )
+
+        print(
+            "\nFirst missing image:"
+        )
+
+        print(
+            missing_images[0]
+        )
+
+        raise FileNotFoundError(
+            "\nSome validation images "
+            "could not be found."
+        )
+
+    print(
+        f"Images found: "
+        f"{len(val_df)}"
+    )
+
+    print(
+        "Images missing: 0"
+    )
+
+    # ========================================================
+    # VALIDATION DATASET
+    # ========================================================
+
+    print(
+        "\nCreating validation dataset..."
+    )
+
+    val_dataset = VinBigDataDataset(
+        val_df,
+        transform=val_transform
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=BATCH_SIZE,
+        shuffle=False,
+        num_workers=NUM_WORKERS
+    )
+
+    # ========================================================
+    # LOAD MODEL
+    # ========================================================
+
+    model, checkpoint = load_model()
+
+    # ========================================================
+    # RUN EVALUATION
+    # ========================================================
+
+    (
+        labels,
+        predictions,
+        probabilities
+    ) = evaluate(
+        model,
+        val_loader
+    )
+
+    # ========================================================
+    # CALCULATE METRICS
+    # ========================================================
+
+    metrics = calculate_metrics(
+        labels,
+        predictions,
+        probabilities
+    )
+
+    per_class_metrics = (
+        calculate_per_class_metrics(
+            labels,
+            predictions
+        )
+    )
+
+    # ========================================================
+    # CONFUSION MATRIX
+    # ========================================================
+
+    cm = create_confusion_matrix(
+        labels,
+        predictions
+    )
+
+    cm_path = save_confusion_matrix(
+        cm
+    )
+
+    # ========================================================
+    # CLASSIFICATION REPORT
+    # ========================================================
+
+    (
+        report,
+        report_path
+    ) = save_classification_report(
+        labels,
+        predictions
+    )
+
+    # ========================================================
+    # SUMMARY
+    # ========================================================
+
+    summary_path = save_summary(
+        metrics,
+        per_class_metrics,
+        checkpoint
+    )
+
+    # Update number of validation images
+    with open(
+        summary_path,
+        "r",
+        encoding="utf-8"
+    ) as file:
+
+        summary = json.load(
+            file
+        )
+
+    summary[
+        "num_validation_images"
+    ] = len(val_df)
+
+    with open(
+        summary_path,
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            summary,
+            file,
+            indent=4
+        )
+
+    # ========================================================
+    # PRINT OVERALL RESULTS
+    # ========================================================
+
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        "RESNET-50 EVALUATION RESULTS"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        f"Accuracy        : "
+        f"{metrics['accuracy']:.4f}"
+    )
+
+    print(
+        f"Macro Precision : "
+        f"{metrics['macro_precision']:.4f}"
+    )
+
+    print(
+        f"Macro Recall    : "
+        f"{metrics['macro_recall']:.4f}"
+    )
+
+    print(
+        f"Macro F1        : "
+        f"{metrics['macro_f1']:.4f}"
+    )
+
+    print(
+        f"Macro AUC-ROC   : "
+        f"{metrics['macro_auc_roc']:.4f}"
+    )
+
+    # ========================================================
+    # PRINT PER-CLASS RESULTS
+    # ========================================================
+
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        "PER-CLASS RESULTS"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        f"{'Class':<22}"
+        f"{'Precision':>12}"
+        f"{'Recall':>12}"
+        f"{'F1':>12}"
+    )
+
+    print(
+        "-" * 58
+    )
+
+    for class_id, class_name in enumerate(
+        CLASS_NAMES
+    ):
+
+        result = per_class_metrics[
+            class_name
+        ]
+
+        print(
+            f"{class_name:<22}"
+            f"{result['precision']:>12.4f}"
+            f"{result['recall']:>12.4f}"
+            f"{result['f1']:>12.4f}"
+        )
+
+    # ========================================================
+    # PRINT CLASSIFICATION REPORT
+    # ========================================================
+
+    print(
+        "\n" + "=" * 60
+    )
+
+    print(
+        "CLASSIFICATION REPORT"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        report
+    )
+
+    # ========================================================
+    # PRINT CONFUSION MATRIX
+    # ========================================================
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        "CONFUSION MATRIX"
+    )
+
+    print(
+        "=" * 60
+    )
+
+    print(
+        "Rows    = Actual"
+    )
+
+    print(
+        "Columns = Predicted"
+    )
+
+    print()
+
+    print(
+        "             "
+        + " ".join(
+            f"{i:^7}"
+            for i in range(NUM_CLASSES)
+        )
+    )
+
+    for class_id in range(
         NUM_CLASSES
     ):
 
-        plt.text(
-            j,
-            i,
-            cm[i, j],
-            ha="center",
-            va="center"
+        print(
+            f"{class_id} "
+            f"{CLASS_NAMES[class_id]:<18}"
+            + " ".join(
+                f"{value:^7}"
+                for value in cm[class_id]
+            )
         )
 
+    # ========================================================
+    # FINAL OUTPUT
+    # ========================================================
 
-plt.tight_layout()
+    print(
+        "\n" + "=" * 60
+    )
 
+    print(
+        "EVALUATION COMPLETED"
+    )
 
-cm_path = os.path.join(
-    OUTPUT_DIR,
-    "confusion_matrix.png"
-)
+    print(
+        "=" * 60
+    )
 
+    print(
+        f"Results directory : "
+        f"{OUTPUT_DIR}"
+    )
 
-plt.savefig(
-    cm_path,
-    dpi=200,
-    bbox_inches="tight"
-)
+    print(
+        f"Summary file      : "
+        f"{summary_path}"
+    )
 
-plt.close()
+    print(
+        f"Classification report : "
+        f"{report_path}"
+    )
+
+    print(
+        f"Confusion matrix      : "
+        f"{cm_path}"
+    )
 
 
 # ============================================================
-# FINAL OUTPUT
+# ENTRY POINT
 # ============================================================
 
-print(
-    "\n" + "=" * 60
-)
+if __name__ == "__main__":
 
-print(
-    "TEST EVALUATION COMPLETED"
-)
-
-print(
-    "=" * 60
-)
-
-print(
-    f"Metrics JSON       : "
-    f"{metrics_path}"
-)
-
-print(
-    f"Classification CSV : "
-    f"{report_path}"
-)
-
-print(
-    f"Confusion Matrix   : "
-    f"{cm_path}"
-)
-
-print(
-    "=" * 60
-)
+    main()
