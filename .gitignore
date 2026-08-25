@@ -33,3 +33,9 @@ Thumbs.db
 
 # Dataset archive
 *.zip
+
+# Backend
+backend/storage/
+backend/.env
+backend/.pytest_cache/
+*.db
