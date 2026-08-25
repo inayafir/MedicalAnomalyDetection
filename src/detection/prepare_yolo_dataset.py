@@ -52,11 +52,47 @@ TRAIN_RATIO = 0.8
 
 RANDOM_SEED = 42
 
+
+# IMPORTANT:
+# Normal is NOT a YOLO detection class.
+#
+# Normal images are kept as background images with empty
+# YOLO label files.
+#
+# The 14 abnormal VinBigData classes are the YOLO classes.
+
+CLASS_MAPPING = {
+    "Aortic enlargement": 0,
+    "Atelectasis": 1,
+    "Calcification": 2,
+    "Cardiomegaly": 3,
+    "Consolidation": 4,
+    "ILD": 5,
+    "Infiltration": 6,
+    "Lung Opacity": 7,
+    "Nodule/Mass": 8,
+    "Other lesion": 9,
+    "Pleural effusion": 10,
+    "Pleural thickening": 11,
+    "Pneumothorax": 12,
+    "Pulmonary fibrosis": 13,
+}
+
+
 CLASS_NAMES = [
-    "Normal",
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
     "Cardiomegaly",
-    "Pleural effusion",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
     "Lung Opacity",
+    "Nodule/Mass",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
     "Pulmonary fibrosis",
 ]
 
@@ -68,12 +104,18 @@ NUM_CLASSES = len(CLASS_NAMES)
 # ============================================================
 
 print("=" * 60)
-print("YOLOv8 DATASET PREPARATION")
+print("YOLOv8 14-CLASS DATASET PREPARATION")
 print("=" * 60)
 
 print(f"Input CSV : {INPUT_CSV}")
 print(f"Image Dir : {IMAGE_DIR}")
 print(f"YOLO Dir  : {YOLO_DIR}")
+
+print("\nYOLO detection classes:")
+for class_id, class_name in enumerate(CLASS_NAMES):
+    print(f"  {class_id}: {class_name}")
+
+print("\nNormal is treated as background/negative images.")
 
 
 # ============================================================
@@ -82,14 +124,15 @@ print(f"YOLO Dir  : {YOLO_DIR}")
 
 print("\nLoading WBF annotations...")
 
+if not INPUT_CSV.exists():
+    raise FileNotFoundError(
+        f"WBF annotation file not found:\n{INPUT_CSV}"
+    )
+
 df = pd.read_csv(INPUT_CSV)
 
 print(f"Annotation rows : {len(df)}")
-
-print(
-    f"Unique images   : "
-    f"{df['image_id'].nunique()}"
-)
+print(f"Unique images   : {df['image_id'].nunique()}")
 
 
 # ============================================================
@@ -115,13 +158,53 @@ missing_columns = [
 ]
 
 if missing_columns:
-
     raise ValueError(
-        f"Missing required columns: "
-        f"{missing_columns}"
+        f"Missing required columns: {missing_columns}"
     )
 
 print("Required columns verified.")
+
+
+# ============================================================
+# VERIFY ALL 15 SOURCE CLASSES
+# ============================================================
+
+expected_source_classes = [
+    "Normal",
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
+    "Cardiomegaly",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
+    "Lung Opacity",
+    "Nodule/Mass",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
+    "Pulmonary fibrosis",
+]
+
+print("\nChecking source classes...")
+
+found_classes = set(
+    df["project_class"].dropna().unique()
+)
+
+missing_source_classes = [
+    class_name
+    for class_name in expected_source_classes
+    if class_name not in found_classes
+]
+
+if missing_source_classes:
+    raise ValueError(
+        f"Missing source classes: {missing_source_classes}"
+    )
+
+print("All 15 source classes found.")
 
 
 # ============================================================
@@ -146,32 +229,18 @@ for image_id in unique_image_ids:
     )
 
     if not image_path.exists():
-
-        missing_images.append(
-            image_id
-        )
+        missing_images.append(image_id)
 
 
-print(
-    f"Images checked : "
-    f"{len(unique_image_ids)}"
-)
-
-print(
-    f"Missing images : "
-    f"{len(missing_images)}"
-)
-
+print(f"Images checked : {len(unique_image_ids)}")
+print(f"Missing images : {len(missing_images)}")
 
 if missing_images:
 
     print("\nFirst missing images:")
 
     for image_id in missing_images[:10]:
-
-        print(
-            f"  {image_id}"
-        )
+        print(f"  {image_id}")
 
     raise FileNotFoundError(
         "Some required images are missing."
@@ -179,10 +248,10 @@ if missing_images:
 
 
 # ============================================================
-# CREATE YOLO DIRECTORIES
+# CREATE / CLEAN YOLO DIRECTORIES
 # ============================================================
 
-print("\nCreating YOLO directories...")
+print("\nPreparing YOLO directories...")
 
 for directory in [
     TRAIN_IMAGE_DIR,
@@ -197,27 +266,37 @@ for directory in [
     )
 
 
+# Remove old files from the previous incorrect dataset.
+
+print("Removing old YOLO dataset files...")
+
+for directory in [
+    TRAIN_IMAGE_DIR,
+    VAL_IMAGE_DIR,
+    TRAIN_LABEL_DIR,
+    VAL_LABEL_DIR,
+]:
+
+    for file_path in directory.iterdir():
+
+        if file_path.is_file():
+            file_path.unlink()
+
+
 # ============================================================
 # IMAGE-LEVEL TRAIN / VALIDATION SPLIT
 # ============================================================
 
 print("\nCreating image-level train/validation split...")
 
-random.seed(
-    RANDOM_SEED
-)
+random.seed(RANDOM_SEED)
 
-image_ids = list(
-    unique_image_ids
-)
+image_ids = list(unique_image_ids)
 
-random.shuffle(
-    image_ids
-)
+random.shuffle(image_ids)
 
 split_index = int(
-    len(image_ids)
-    * TRAIN_RATIO
+    len(image_ids) * TRAIN_RATIO
 )
 
 train_image_ids = set(
@@ -230,13 +309,11 @@ val_image_ids = set(
 
 
 print(
-    f"Training images   : "
-    f"{len(train_image_ids)}"
+    f"Training images   : {len(train_image_ids)}"
 )
 
 print(
-    f"Validation images : "
-    f"{len(val_image_ids)}"
+    f"Validation images : {len(val_image_ids)}"
 )
 
 
@@ -253,24 +330,8 @@ def convert_to_yolo(
     image_height
 ):
 
-    # YOLO format:
-    #
-    # class_id
-    # x_center
-    # y_center
-    # width
-    # height
-    #
-    # All coordinates are normalized
-    # between 0 and 1.
-
-    box_width = (
-        x_max - x_min
-    )
-
-    box_height = (
-        y_max - y_min
-    )
+    box_width = x_max - x_min
+    box_height = y_max - y_min
 
     x_center = (
         x_min + x_max
@@ -355,62 +416,59 @@ def process_image(
     # Process annotations
     # --------------------------------------------------------
 
-    for _, row in (
-        image_annotations.iterrows()
-    ):
+    for _, row in image_annotations.iterrows():
 
-        class_id = int(
-            row["project_class_id"]
-        )
+        project_class = row["project_class"]
 
 
         # ----------------------------------------------------
-        # Normal images do not have bounding boxes.
+        # NORMAL
         #
-        # YOLO detection labels therefore remain empty.
+        # Normal has no bounding box and therefore becomes
+        # an empty YOLO label file.
         # ----------------------------------------------------
 
-        if class_id == 0:
-
+        if project_class == "Normal":
             continue
 
 
         # ----------------------------------------------------
-        # Skip missing bounding boxes.
+        # Verify class
         # ----------------------------------------------------
 
-        if pd.isna(
-            row["x_min"]
-        ) or pd.isna(
-            row["y_min"]
-        ) or pd.isna(
-            row["x_max"]
-        ) or pd.isna(
-            row["y_max"]
+        if project_class not in CLASS_MAPPING:
+            raise ValueError(
+                f"Unknown detection class: {project_class}"
+            )
+
+
+        class_id = CLASS_MAPPING[
+            project_class
+        ]
+
+
+        # ----------------------------------------------------
+        # Skip missing bounding boxes
+        # ----------------------------------------------------
+
+        if (
+            pd.isna(row["x_min"])
+            or pd.isna(row["y_min"])
+            or pd.isna(row["x_max"])
+            or pd.isna(row["y_max"])
         ):
 
             continue
 
 
-        x_min = float(
-            row["x_min"]
-        )
-
-        y_min = float(
-            row["y_min"]
-        )
-
-        x_max = float(
-            row["x_max"]
-        )
-
-        y_max = float(
-            row["y_max"]
-        )
+        x_min = float(row["x_min"])
+        y_min = float(row["y_min"])
+        x_max = float(row["x_max"])
+        y_max = float(row["y_max"])
 
 
         # ----------------------------------------------------
-        # Validate box
+        # Validate bounding box
         # ----------------------------------------------------
 
         if x_max <= x_min:
@@ -440,32 +498,21 @@ def process_image(
 
 
         # ----------------------------------------------------
-        # Clamp values to valid range
+        # Validate normalized values
         # ----------------------------------------------------
 
-        x_center = min(
-            max(x_center, 0.0),
-            1.0
-        )
+        if not (
+            0.0 <= x_center <= 1.0
+            and 0.0 <= y_center <= 1.0
+            and 0.0 <= box_width <= 1.0
+            and 0.0 <= box_height <= 1.0
+        ):
 
-        y_center = min(
-            max(y_center, 0.0),
-            1.0
-        )
-
-        box_width = min(
-            max(box_width, 0.0),
-            1.0
-        )
-
-        box_height = min(
-            max(box_height, 0.0),
-            1.0
-        )
+            continue
 
 
         # ----------------------------------------------------
-        # Create YOLO label line
+        # Create YOLO label
         # ----------------------------------------------------
 
         yolo_line = (
@@ -483,19 +530,20 @@ def process_image(
 
     # --------------------------------------------------------
     # Write label file
+    #
+    # Normal images will have an empty .txt file.
     # --------------------------------------------------------
 
     with open(
         output_label_path,
-        "w"
+        "w",
+        encoding="utf-8"
     ) as file:
 
         if yolo_lines:
 
             file.write(
-                "\n".join(
-                    yolo_lines
-                )
+                "\n".join(yolo_lines)
             )
 
 
@@ -508,22 +556,19 @@ print("\nConverting annotations to YOLO format...")
 processed_train = 0
 processed_val = 0
 
+
 train_annotations = df[
-    df["image_id"].isin(
-        train_image_ids
-    )
+    df["image_id"].isin(train_image_ids)
 ]
 
 val_annotations = df[
-    df["image_id"].isin(
-        val_image_ids
-    )
+    df["image_id"].isin(val_image_ids)
 ]
 
 
-# ------------------------------------------------------------
-# Training images
-# ------------------------------------------------------------
+# ============================================================
+# TRAINING IMAGES
+# ============================================================
 
 print("\nProcessing training images...")
 
@@ -556,9 +601,9 @@ for image_index, (
         )
 
 
-# ------------------------------------------------------------
-# Validation images
-# ------------------------------------------------------------
+# ============================================================
+# VALIDATION IMAGES
+# ============================================================
 
 print("\nProcessing validation images...")
 
@@ -654,23 +699,19 @@ val_labels = list(
 
 
 print(
-    f"Train images : "
-    f"{len(train_images)}"
+    f"Train images : {len(train_images)}"
 )
 
 print(
-    f"Train labels : "
-    f"{len(train_labels)}"
+    f"Train labels : {len(train_labels)}"
 )
 
 print(
-    f"Val images   : "
-    f"{len(val_images)}"
+    f"Val images   : {len(val_images)}"
 )
 
 print(
-    f"Val labels   : "
-    f"{len(val_labels)}"
+    f"Val labels   : {len(val_labels)}"
 )
 
 
@@ -682,13 +723,20 @@ invalid_labels = 0
 
 total_detection_boxes = 0
 
+class_box_counts = {
+    class_id: 0
+    for class_id in range(NUM_CLASSES)
+}
+
+
 for label_file in (
     train_labels + val_labels
 ):
 
     with open(
         label_file,
-        "r"
+        "r",
+        encoding="utf-8"
     ) as file:
 
         lines = [
@@ -708,14 +756,19 @@ for label_file in (
             continue
 
 
-        class_id = int(
-            parts[0]
-        )
+        try:
 
-        values = [
-            float(value)
-            for value in parts[1:]
-        ]
+            class_id = int(parts[0])
+
+            values = [
+                float(value)
+                for value in parts[1:]
+            ]
+
+        except ValueError:
+
+            invalid_labels += 1
+            continue
 
 
         if not (
@@ -737,16 +790,35 @@ for label_file in (
 
         total_detection_boxes += 1
 
+        class_box_counts[
+            class_id
+        ] += 1
+
 
 print(
-    f"Detection boxes : "
-    f"{total_detection_boxes}"
+    f"Detection boxes : {total_detection_boxes}"
 )
 
 print(
-    f"Invalid labels   : "
-    f"{invalid_labels}"
+    f"Invalid labels   : {invalid_labels}"
 )
+
+
+# ============================================================
+# CLASS BOX DISTRIBUTION
+# ============================================================
+
+print("\nDetection boxes by class:")
+
+for class_id, class_name in enumerate(
+    CLASS_NAMES
+):
+
+    print(
+        f"  {class_id:2d} - "
+        f"{class_name:<22} : "
+        f"{class_box_counts[class_id]}"
+    )
 
 
 # ============================================================
@@ -758,13 +830,11 @@ print("YOLOv8 DATASET PREPARATION COMPLETED")
 print("=" * 60)
 
 print(
-    f"Train images : "
-    f"{processed_train}"
+    f"Train images : {processed_train}"
 )
 
 print(
-    f"Val images   : "
-    f"{processed_val}"
+    f"Val images   : {processed_val}"
 )
 
 print(
@@ -797,7 +867,10 @@ for class_id, class_name in enumerate(
         f"{class_id} - {class_name}"
     )
 
+print("\nNormal images are background images.")
+print("Normal is NOT a detection class.")
+
 print("\nNext stage:")
-print("Train YOLOv8 detection model")
+print("Train YOLOv8m detection model")
 
 print("=" * 60)

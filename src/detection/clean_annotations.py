@@ -48,23 +48,61 @@ OUTPUT_CSV = (
 # CONFIGURATION
 # ============================================================
 
-# Official VinBigData class names that we are using.
+# All official VinBigData classes are retained.
+#
+# "No finding" is renamed to "Normal".
+#
+# Important:
+# Normal is NOT a detection class because it has
+# no bounding box.
+#
+# The remaining 14 disease classes will be used
+# for YOLO object detection.
+
 
 CLASS_MAPPING = {
     "No finding": "Normal",
+    "Aortic enlargement": "Aortic enlargement",
+    "Atelectasis": "Atelectasis",
+    "Calcification": "Calcification",
     "Cardiomegaly": "Cardiomegaly",
-    "Pleural effusion": "Pleural effusion",
+    "Consolidation": "Consolidation",
+    "ILD": "ILD",
+    "Infiltration": "Infiltration",
     "Lung Opacity": "Lung Opacity",
+    "Nodule/Mass": "Nodule/Mass",
+    "Other lesion": "Other lesion",
+    "Pleural effusion": "Pleural effusion",
+    "Pleural thickening": "Pleural thickening",
+    "Pneumothorax": "Pneumothorax",
     "Pulmonary fibrosis": "Pulmonary fibrosis",
 }
 
 
+# Class IDs used in the cleaned annotation file.
+#
+# 0 = Normal
+# 1-14 = disease classes
+#
+# Normal will later be excluded from YOLO
+# bounding-box class IDs.
+
 CLASS_IDS = {
     "Normal": 0,
-    "Cardiomegaly": 1,
-    "Pleural effusion": 2,
-    "Lung Opacity": 3,
-    "Pulmonary fibrosis": 4,
+    "Aortic enlargement": 1,
+    "Atelectasis": 2,
+    "Calcification": 3,
+    "Cardiomegaly": 4,
+    "Consolidation": 5,
+    "ILD": 6,
+    "Infiltration": 7,
+    "Lung Opacity": 8,
+    "Nodule/Mass": 9,
+    "Other lesion": 10,
+    "Pleural effusion": 11,
+    "Pleural thickening": 12,
+    "Pneumothorax": 13,
+    "Pulmonary fibrosis": 14,
 }
 
 
@@ -150,11 +188,11 @@ print(
 
 
 # ============================================================
-# SELECT FIVE PROJECT CLASSES
+# SELECT ALL VINBIGDATA CLASSES
 # ============================================================
 
 print(
-    "\nSelecting project classes..."
+    "\nSelecting all VinBigData classes..."
 )
 
 df = df[
@@ -167,6 +205,57 @@ df = df[
 print(
     f"Rows after class filtering : "
     f"{len(df)}"
+)
+
+
+# ============================================================
+# CHECK THAT ALL CLASSES ARE PRESENT
+# ============================================================
+
+print(
+    "\nClasses found in selected data:"
+)
+
+found_classes = (
+    df["class_name"]
+    .drop_duplicates()
+    .tolist()
+)
+
+for class_name in CLASS_MAPPING.keys():
+
+    if class_name in found_classes:
+
+        print(
+            f"  [FOUND] {class_name}"
+        )
+
+    else:
+
+        print(
+            f"  [MISSING] {class_name}"
+        )
+
+
+missing_classes = [
+    class_name
+    for class_name in CLASS_MAPPING.keys()
+    if class_name not in found_classes
+]
+
+if missing_classes:
+
+    raise ValueError(
+        "\nThe following expected classes "
+        "were not found in the dataset:\n"
+        + "\n".join(
+            missing_classes
+        )
+    )
+
+
+print(
+    "\nAll 15 VinBigData classes found."
 )
 
 
@@ -270,6 +359,7 @@ df = df[
 # Normal images will therefore have NaN
 # bounding-box coordinates.
 
+
 normal_mask = (
     df["project_class"]
     == "Normal"
@@ -354,7 +444,8 @@ print(
 )
 
 
-# Remove abnormal rows with missing/invalid boxes.
+# Remove abnormal rows with missing
+# or invalid bounding boxes.
 
 abnormal_df = abnormal_df[
     ~missing_bbox
@@ -473,7 +564,7 @@ print(
 )
 
 print(
-    "FINAL FIVE-CLASS DISTRIBUTION"
+    "FINAL CLASS DISTRIBUTION"
 )
 
 print(
@@ -568,6 +659,16 @@ print(
     f"Output file           : "
     f"{OUTPUT_CSV}"
 )
+
+print(
+    "\nClasses:"
+)
+
+for class_id, class_name in CLASS_IDS.items():
+
+    print(
+        f"  {class_id} - {class_name}"
+    )
 
 print(
     "\nNext stage:"

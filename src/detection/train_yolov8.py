@@ -35,8 +35,7 @@ OUTPUT_DIR.mkdir(
 # CONFIGURATION
 # ============================================================
 
-# Project requirement:
-# YOLOv8m detector
+# YOLOv8m is the required detection model.
 #
 # Normal is NOT a detection class.
 #
@@ -73,123 +72,114 @@ print("=" * 60)
 print("YOLOv8m DETECTION TRAINING")
 print("=" * 60)
 
-print(
-    f"Device     : {DEVICE}"
-)
-
-print(
-    f"Model      : {MODEL_NAME}"
-)
-
-print(
-    f"Image size : {IMAGE_SIZE}"
-)
-
-print(
-    f"Epochs     : {EPOCHS}"
-)
-
-print(
-    f"Batch size : {BATCH_SIZE}"
-)
-
-print(
-    f"Data YAML  : {DATA_YAML}"
-)
+print(f"Device     : {DEVICE}")
+print(f"Model      : {MODEL_NAME}")
+print(f"Image size : {IMAGE_SIZE}")
+print(f"Epochs     : {EPOCHS}")
+print(f"Batch size : {BATCH_SIZE}")
+print(f"Data YAML  : {DATA_YAML}")
 
 
 # ============================================================
-# CHECK DATASET YAML
+# CHECK DATASET
 # ============================================================
 
 if not DATA_YAML.exists():
-
     raise FileNotFoundError(
-        f"\nDataset YAML not found:\n"
-        f"{DATA_YAML}"
+        f"\nDataset YAML not found:\n{DATA_YAML}"
     )
 
-
-print(
-    "\nDataset YAML found."
-)
+print("\nDataset YAML found.")
 
 
 # ============================================================
 # LOAD PRETRAINED YOLOv8m
 # ============================================================
 
-print(
-    "\nLoading pretrained YOLOv8m model..."
-)
+print("\nLoading pretrained YOLOv8m model...")
 
-model = YOLO(
-    MODEL_NAME
-)
+model = YOLO(MODEL_NAME)
 
-print(
-    "YOLOv8m model loaded successfully."
-)
+print("YOLOv8m model loaded successfully.")
 
 
 # ============================================================
 # TRAIN
 # ============================================================
 
-print(
-    "\nStarting YOLOv8m training..."
-)
+print("\nStarting YOLOv8m training...")
 
 results = model.train(
 
+    # --------------------------------------------------------
     # Dataset
+    # --------------------------------------------------------
     data=str(DATA_YAML),
 
-    # Training duration
+    # --------------------------------------------------------
+    # Training
+    # --------------------------------------------------------
     epochs=EPOCHS,
-
-    # Input resolution
     imgsz=IMAGE_SIZE,
-
-    # Batch size
     batch=BATCH_SIZE,
 
-    # CPU/GPU
+    # --------------------------------------------------------
+    # Device
+    # --------------------------------------------------------
     device=DEVICE,
 
+    # --------------------------------------------------------
     # Output
+    # --------------------------------------------------------
     project=str(OUTPUT_DIR),
-
     name=PROJECT_NAME,
 
-    # Pretrained model
+    # --------------------------------------------------------
+    # Pretrained weights
+    # --------------------------------------------------------
     pretrained=True,
 
+    # --------------------------------------------------------
     # Early stopping
+    # --------------------------------------------------------
     patience=10,
 
+    # --------------------------------------------------------
     # DataLoader
+    # --------------------------------------------------------
     workers=0,
 
-    # Save checkpoints
+    # --------------------------------------------------------
+    # Checkpoints
+    # --------------------------------------------------------
     save=True,
-
-    # Save best model
     save_period=-1,
 
+    # --------------------------------------------------------
     # Validation
+    # --------------------------------------------------------
     val=True,
+    split="val",
 
+    # --------------------------------------------------------
     # Generate plots
+    # --------------------------------------------------------
     plots=True,
 
-    # Cache disabled to avoid unnecessary RAM usage
+    # --------------------------------------------------------
+    # Memory
+    # --------------------------------------------------------
     cache=False,
 
+    # --------------------------------------------------------
     # Reproducibility
+    # --------------------------------------------------------
     seed=42,
+    deterministic=True,
 
-    # Verbose training output
+    # --------------------------------------------------------
+    # Logging
+    # --------------------------------------------------------
     verbose=True,
 )
 
@@ -198,39 +188,22 @@ results = model.train(
 # COMPLETED
 # ============================================================
 
-print(
-    "\n" + "=" * 60
-)
+print("\n" + "=" * 60)
+print("YOLOv8m TRAINING COMPLETED")
+print("=" * 60)
 
-print(
-    "YOLOv8m TRAINING COMPLETED"
-)
+RUN_DIR = OUTPUT_DIR / PROJECT_NAME
 
-print(
-    "=" * 60
-)
+BEST_MODEL = RUN_DIR / "weights" / "best.pt"
 
-print(
-    f"Output directory:\n"
-    f"{OUTPUT_DIR / PROJECT_NAME}"
-)
+print(f"\nOutput directory:")
+print(RUN_DIR)
 
-print(
-    "\nThe trained weights should be located at:"
-)
+print("\nBest model:")
+print(BEST_MODEL)
 
-print(
-    OUTPUT_DIR
-    / PROJECT_NAME
-    / RUN_NAME
-    / "weights"
-    / "best.pt"
-)
+print("\nTraining results:")
+print(RUN_DIR / "results.csv")
 
-print(
-    "\nNext stage:"
-)
-
-print(
-    "Evaluate YOLOv8m detection model"
-)
+print("\nNext stage:")
+print("Evaluate YOLOv8m detection model")
