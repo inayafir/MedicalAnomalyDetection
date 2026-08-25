@@ -17,14 +17,6 @@ DATA_YAML = (
     / "data.yaml"
 )
 
-MODEL_PATH = (
-    PROJECT_ROOT
-    / "outputs"
-    / "detection"
-    / "yolov8_detection"
-    / "weights"
-    / "best.pt"
-)
 
 OUTPUT_DIR = (
     PROJECT_ROOT
@@ -32,7 +24,16 @@ OUTPUT_DIR = (
     / "detection"
     / "yolov8_evaluation"
 )
-
+MODEL_PATH = (
+    PROJECT_ROOT
+    / "runs"
+    / "detect"
+    / "outputs"
+    / "detection"
+    / "yolov8n_4class"
+    / "weights"
+    / "best.pt"
+)
 
 # ============================================================
 # MAIN
@@ -84,8 +85,8 @@ def main():
     metrics = model.val(
         data=str(DATA_YAML),
         split="val",
-        imgsz=640,
-        batch=8,
+        imgsz=320,
+        batch=4,
         device="cpu",
         workers=0,
         project=str(OUTPUT_DIR),
