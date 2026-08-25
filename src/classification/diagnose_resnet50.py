@@ -20,13 +20,45 @@ from sklearn.metrics import (
 # CONFIGURATION
 # ============================================================
 
-TEST_CSV = "data/processed/classification/test.csv"
+PROJECT_ROOT = os.path.abspath(
+    os.path.join(
+        os.path.dirname(__file__),
+        "..",
+        ".."
+    )
+)
 
-IMAGE_DIR = "data/raw/vinbigdata/train"
+TEST_CSV = os.path.join(
+    PROJECT_ROOT,
+    "data",
+    "processed",
+    "classification",
+    "test.csv"
+)
 
-CHECKPOINT = "outputs/classification/resnet50_best.pth"
+IMAGE_DIR = os.path.join(
+    PROJECT_ROOT,
+    "data",
+    "raw",
+    "vinbigdata",
+    "train"
+)
 
-OUTPUT_DIR = "outputs/classification"
+CHECKPOINT = os.path.join(
+    PROJECT_ROOT,
+    "outputs",
+    "classification",
+    "resnet50",
+    "best_model.pth"
+)
+
+OUTPUT_DIR = os.path.join(
+    PROJECT_ROOT,
+    "outputs",
+    "classification",
+    "resnet50",
+    "diagnostic"
+)
 
 IMAGE_SIZE = 224
 BATCH_SIZE = 8
