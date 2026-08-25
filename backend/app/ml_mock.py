@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import os
 import random
 
 from PIL import Image
@@ -10,19 +9,41 @@ from app.config import settings
 from app.models import FindingClass
 from app.storage import save_heatmap
 
+# Weighted distribution matching realistic chest X-ray class imbalance.
+# Normal is most common; rare findings get lower weights.
 CLASS_WEIGHTS = {
-    FindingClass.NORMAL: 0.40,
-    FindingClass.CARDIOMEGALY: 0.20,
-    FindingClass.PLEURAL_EFFUSION: 0.15,
-    FindingClass.LUNG_OPACITY: 0.15,
-    FindingClass.PULMONARY_FIBROSIS: 0.10,
+    FindingClass.NORMAL: 0.30,
+    FindingClass.CARDIOMEGALY: 0.10,
+    FindingClass.PLEURAL_EFFUSION: 0.10,
+    FindingClass.LUNG_OPACITY: 0.10,
+    FindingClass.PULMONARY_FIBROSIS: 0.06,
+    FindingClass.AORTIC_ENLARGEMENT: 0.05,
+    FindingClass.ATELECTASIS: 0.05,
+    FindingClass.CALCIFICATION: 0.04,
+    FindingClass.CONSOLIDATION: 0.04,
+    FindingClass.ILD: 0.04,
+    FindingClass.INFILTRATION: 0.04,
+    FindingClass.NODULE_MASS: 0.04,
+    FindingClass.OTHER_LESION: 0.03,
+    FindingClass.PLEURAL_THICKENING: 0.03,
+    FindingClass.PNEUMOTHORAX: 0.02,
 }
 
-# Only these classes produce bounding boxes
+# Only disease classes produce bounding boxes (not Normal)
 BBOX_CLASSES = {
+    FindingClass.AORTIC_ENLARGEMENT,
+    FindingClass.ATELECTASIS,
+    FindingClass.CALCIFICATION,
     FindingClass.CARDIOMEGALY,
-    FindingClass.PLEURAL_EFFUSION,
+    FindingClass.CONSOLIDATION,
+    FindingClass.ILD,
+    FindingClass.INFILTRATION,
     FindingClass.LUNG_OPACITY,
+    FindingClass.NODULE_MASS,
+    FindingClass.OTHER_LESION,
+    FindingClass.PLEURAL_EFFUSION,
+    FindingClass.PLEURAL_THICKENING,
+    FindingClass.PNEUMOTHORAX,
     FindingClass.PULMONARY_FIBROSIS,
 }
 

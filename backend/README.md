@@ -1,6 +1,6 @@
 # Chest X-Ray Anomaly Detection — Backend
 
-Backend REST API and database layer for a chest X-ray anomaly detection system, integrating with Person A's ML models (ResNet-50 classifier + YOLOv8 detector + Grad-CAM).
+Backend REST API and database layer for a chest X-ray anomaly detection system, integrating with Person A's ML models (ResNet-50 classifier + YOLOv8m detector + Grad-CAM).
 
 ## Integration Notes
 
@@ -12,28 +12,34 @@ Two separate models exist — no single `predict()` function:
 
 | Model | Entry Point | Returns |
 |---|---|---|
-| YOLOv8 detection | `src/detection/predict.py :: predict_image()` | `{"model", "detections": [...], "num_detections"}` |
+| YOLOv8m detection | `src/detection/predict.py :: predict_image()` | `{"model", "detections": [...], "num_detections"}` |
 | ResNet-50 + Grad-CAM | `src/classification/gradcam_resnet50.py :: generate_gradcam()` | `{"class", "confidence", "heatmap"}` |
 
-### Class name mismatches
+### Classes (15 total, matching full VinBigData dataset)
 
-Person A's actual labels differ from the original spec:
-
-| Original contract | Person A's repo | Status |
+| ID | Class Name | Type |
 |---|---|---|
-| `"No Finding"` | `"Normal"` | Changed |
-| `"Cardiomegaly"` | `"Cardiomegaly"` | Same |
-| `"Pleural Effusion"` | `"Pleural effusion"` | Capitalization differs |
-| `"Lung Opacity"` | `"Lung Opacity"` | Same |
-| `"Aortic Enlargement"` | `"Pulmonary fibrosis"` | Changed |
-
-The backend uses **Person A's actual class names** since their model outputs these.
+| 0 | Normal | Classification only (no bboxes) |
+| 1 | Aortic enlargement | Detection + Classification |
+| 2 | Atelectasis | Detection + Classification |
+| 3 | Calcification | Detection + Classification |
+| 4 | Cardiomegaly | Detection + Classification |
+| 5 | Consolidation | Detection + Classification |
+| 6 | ILD | Detection + Classification |
+| 7 | Infiltration | Detection + Classification |
+| 8 | Lung Opacity | Detection + Classification |
+| 9 | Nodule/Mass | Detection + Classification |
+| 10 | Other lesion | Detection + Classification |
+| 11 | Pleural effusion | Detection + Classification |
+| 12 | Pleural thickening | Detection + Classification |
+| 13 | Pneumothorax | Detection + Classification |
+| 14 | Pulmonary fibrosis | Detection + Classification |
 
 ### How integration works
 
 `app/ml_interface/__init__.py` combines both models:
-1. ResNet-50 provides the overall classification
-2. YOLOv8 provides bounding box detections
+1. ResNet-50 provides the overall classification (15 classes)
+2. YOLOv8m provides bounding box detections (14 disease classes)
 3. Grad-CAM generates the heatmap overlay
 4. All output is normalized to the shared contract shape
 
@@ -42,7 +48,7 @@ The backend uses **Person A's actual class names** since their model outputs the
 > **Note:** The `.pt` and `.pth` weight file paths referenced below are **mock placeholders** — they do not contain real trained model weights. Once Person A completes training, real weight files should be placed at these exact paths to enable the actual ML inference pipeline.
 
 When real weights are available, place them at:
-- YOLO: `ml_core/runs/detect/outputs/detection/yolov8n_4class/weights/best.pt`
+- YOLO: `ml_core/runs/detect/outputs/detection/yolov8m_detection/weights/best.pt`
 - ResNet-50: `ml_core/outputs/classification/resnet50/best_model.pth`
 
 ## Setup
@@ -82,7 +88,7 @@ Copy `.env.example` to `.env` and adjust:
 }
 ```
 
-**Valid classes:** `Normal`, `Cardiomegaly`, `Pleural effusion`, `Lung Opacity`, `Pulmonary fibrosis`
+**Valid classes:** All 15 VinBigData classes listed above.
 
 ## Database Schema
 

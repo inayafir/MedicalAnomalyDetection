@@ -14,28 +14,32 @@ from app.storage import save_heatmap
 # Integration notes (Person A's repo analysis):
 #
 # Two separate models exist:
-#   1. YOLOv8 detection  -> src/detection/predict.py :: predict_image()
-#      Returns: {"model": "YOLOv8n", "detections": [...], "num_detections": N}
+#   1. YOLOv8m detection  -> src/detection/predict.py :: predict_image()
+#      Returns: {"model": "YOLOv8m", "detections": [...], "num_detections": N}
 #      Each detection: {"class_id", "class", "confidence", "bbox": {"x1","y1","x2","y2"}}
 #      Bbox coords: original image pixels (via box.xyxy)
-#      Classes: 4 detection classes (Normal, Cardiomegaly, Pleural effusion, Lung Opacity)
+#      14 detection classes (all disease classes, Normal excluded)
 #
 #   2. ResNet-50 + Grad-CAM -> src/classification/gradcam_resnet50.py :: generate_gradcam()
 #      Returns: {"class": str, "confidence": float, "heatmap": str (file path)}
-#      Classes: ["Normal", "Cardiomegaly", "Pleural effusion", "Lung Opacity", "Pulmonary fibrosis"]
-#
-# Mismatches from original contract:
-#   - "No Finding"  -> Person A uses "Normal"
-#   - "Aortic Enlargement" -> Person A uses "Pulmonary fibrosis"
-#   - No single predict() function; must combine both models
-#   - Bboxes only from YOLO; classification gives the overall finding
+#      15 classes (all VinBigData classes including Normal)
 #
 # Class label mapping (Person A -> contract):
-#   "Normal"            -> "Normal"
-#   "Cardiomegaly"      -> "Cardiomegaly"
-#   "Pleural effusion"  -> "Pleural effusion"
-#   "Lung Opacity"      -> "Lung Opacity"
-#   "Pulmonary fibrosis"-> "Pulmonary fibrosis"
+#   "Normal"               -> "Normal"
+#   "Aortic enlargement"   -> "Aortic enlargement"
+#   "Atelectasis"          -> "Atelectasis"
+#   "Calcification"        -> "Calcification"
+#   "Cardiomegaly"         -> "Cardiomegaly"
+#   "Consolidation"        -> "Consolidation"
+#   "ILD"                  -> "ILD"
+#   "Infiltration"         -> "Infiltration"
+#   "Lung Opacity"         -> "Lung Opacity"
+#   "Nodule/Mass"          -> "Nodule/Mass"
+#   "Other lesion"         -> "Other lesion"
+#   "Pleural effusion"     -> "Pleural effusion"
+#   "Pleural thickening"   -> "Pleural thickening"
+#   "Pneumothorax"         -> "Pneumothorax"
+#   "Pulmonary fibrosis"   -> "Pulmonary fibrosis"
 # ---------------------------------------------------------------------------
 
 _MODEL_LOADED = False
@@ -64,7 +68,7 @@ def _try_load_yolo():
             / "detect"
             / "outputs"
             / "detection"
-            / "yolov8n_4class"
+            / "yolov8m_detection"
             / "weights"
             / "best.pt"
         )
@@ -95,7 +99,7 @@ def _try_load_resnet():
         if model_path.exists():
             device = torch.device(settings.ML_DEVICE)
             model = models.resnet50(weights=None)
-            model.fc = nn.Linear(model.fc.in_features, 5)
+            model.fc = nn.Linear(model.fc.in_features, 15)
             checkpoint = torch.load(str(model_path), map_location=device)
             if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
                 model.load_state_dict(checkpoint["model_state_dict"])
@@ -179,8 +183,11 @@ def _predict_resnet(abs_path: str) -> dict | None:
 
         IMAGE_SIZE = 224
         CLASS_NAMES = [
-            "Normal", "Cardiomegaly", "Pleural effusion",
-            "Lung Opacity", "Pulmonary fibrosis",
+            "Normal", "Aortic enlargement", "Atelectasis", "Calcification",
+            "Cardiomegaly", "Consolidation", "ILD", "Infiltration",
+            "Lung Opacity", "Nodule/Mass", "Other lesion",
+            "Pleural effusion", "Pleural thickening", "Pneumothorax",
+            "Pulmonary fibrosis",
         ]
 
         transform = transforms.Compose([

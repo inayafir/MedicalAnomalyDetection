@@ -18,9 +18,19 @@ from app.db import Base
 
 class FindingClass(str, enum.Enum):
     NORMAL = "Normal"
+    AORTIC_ENLARGEMENT = "Aortic enlargement"
+    ATELECTASIS = "Atelectasis"
+    CALCIFICATION = "Calcification"
     CARDIOMEGALY = "Cardiomegaly"
-    PLEURAL_EFFUSION = "Pleural effusion"
+    CONSOLIDATION = "Consolidation"
+    ILD = "ILD"
+    INFILTRATION = "Infiltration"
     LUNG_OPACITY = "Lung Opacity"
+    NODULE_MASS = "Nodule/Mass"
+    OTHER_LESION = "Other lesion"
+    PLEURAL_EFFUSION = "Pleural effusion"
+    PLEURAL_THICKENING = "Pleural thickening"
+    PNEUMOTHORAX = "Pneumothorax"
     PULMONARY_FIBROSIS = "Pulmonary fibrosis"
 
 
