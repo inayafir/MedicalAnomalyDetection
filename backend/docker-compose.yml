@@ -1,0 +1,16 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./storage/dev.db
+      - STORAGE_ROOT=./storage
+      - ML_DEVICE=cpu
+      - CORS_ORIGINS=*
+      - RESNET_CHECKPOINT=ml_core/checkpoints/resnet50.pth
+      - YOLO_CHECKPOINT=ml_core/checkpoints/yolov8m_14class.pt
+    volumes:
+      - ./storage:/app/storage
+      - ./ml_core/checkpoints:/app/ml_core/checkpoints:ro
+    restart: unless-stopped

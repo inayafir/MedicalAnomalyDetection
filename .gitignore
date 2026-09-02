@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Dataset - do NOT upload to GitHub
+data/raw/
+data/processed/
+
+# Model weights (root-level duplicates only)
+# NOTE: backend/ml_core/checkpoints/*.pt and *.pth are tracked via Git LFS
+/*.pt
+/*.pth
+*.onnx
+
+# Training outputs
+runs/
+outputs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dataset archive
+*.zip
+
+# Backend
+backend/storage/
+backend/.env
+backend/.pytest_cache/
+*.db
