@@ -39,3 +39,10 @@ backend/storage/
 backend/.env
 backend/.pytest_cache/
 *.db
+
+# Final trained models - tracked with Git LFS
+!models/
+!models/resnet50/
+!models/resnet50/best_model.pth
+!models/yolov8/
+!models/yolov8/best.pt

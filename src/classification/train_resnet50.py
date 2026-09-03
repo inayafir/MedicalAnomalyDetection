@@ -8,14 +8,12 @@ import torch
 import torch.nn as nn
 
 from PIL import Image
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader
 from torchvision import models, transforms
 
 from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    confusion_matrix,
     roc_auc_score,
+    f1_score,
 )
 
 
@@ -48,7 +46,7 @@ OUTPUT_DIR = (
     PROJECT_ROOT
     / "outputs"
     / "classification"
-    / "resnet50"
+    / "resnet50_15class_multilabel"
 )
 
 OUTPUT_DIR.mkdir(
@@ -61,19 +59,28 @@ OUTPUT_DIR.mkdir(
 # CONFIGURATION
 # ============================================================
 
-NUM_CLASSES = 5
+NUM_CLASSES = 15
 
 CLASS_NAMES = [
-    "Normal",
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
     "Cardiomegaly",
-    "Pleural effusion",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
     "Lung Opacity",
+    "Nodule/Mass",
+    "Normal",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
     "Pulmonary fibrosis",
 ]
 
 IMAGE_SIZE = 224
 
-# CPU training is slow, so keep this manageable.
 BATCH_SIZE = 8
 
 NUM_EPOCHS = 5
@@ -83,11 +90,6 @@ LEARNING_RATE = 1e-4
 WEIGHT_DECAY = 1e-4
 
 RANDOM_SEED = 42
-
-
-# ============================================================
-# DEVICE
-# ============================================================
 
 DEVICE = torch.device(
     "cuda"
@@ -101,28 +103,19 @@ DEVICE = torch.device(
 # ============================================================
 
 BEST_MODEL_PATH = (
-    OUTPUT_DIR
-    / "best_model.pth"
+    OUTPUT_DIR / "best_model.pth"
 )
 
 FINAL_MODEL_PATH = (
-    OUTPUT_DIR
-    / "final_model.pth"
+    OUTPUT_DIR / "final_model.pth"
 )
 
 HISTORY_PATH = (
-    OUTPUT_DIR
-    / "training_history.json"
-)
-
-CONFUSION_MATRIX_PATH = (
-    OUTPUT_DIR
-    / "confusion_matrix.npy"
+    OUTPUT_DIR / "training_history.json"
 )
 
 CLASS_NAMES_PATH = (
-    OUTPUT_DIR
-    / "class_names.json"
+    OUTPUT_DIR / "class_names.json"
 )
 
 
@@ -133,9 +126,7 @@ CLASS_NAMES_PATH = (
 def set_seed(seed=RANDOM_SEED):
 
     random.seed(seed)
-
     np.random.seed(seed)
-
     torch.manual_seed(seed)
 
     if torch.cuda.is_available():
@@ -165,21 +156,12 @@ class VinBigDataDataset(Dataset):
 
         return len(self.df)
 
-    def __getitem__(
-        self,
-        index
-    ):
+    def __getitem__(self, index):
 
         row = self.df.iloc[index]
 
         image_id = str(
             row["image_id"]
-        )
-
-        # IMPORTANT:
-        # train.csv contains "class_id"
-        label = int(
-            row["class_id"]
         )
 
         image_path = (
@@ -190,7 +172,8 @@ class VinBigDataDataset(Dataset):
         if not image_path.exists():
 
             raise FileNotFoundError(
-                f"Image not found: {image_path}"
+                f"Image not found: "
+                f"{image_path}"
             )
 
         image = Image.open(
@@ -199,11 +182,26 @@ class VinBigDataDataset(Dataset):
 
         if self.transform:
 
-            image = self.transform(
-                image
+            image = self.transform(image)
+
+        # ----------------------------------------------------
+        # Multi-label target
+        # ----------------------------------------------------
+
+        labels = []
+
+        for class_name in CLASS_NAMES:
+
+            labels.append(
+                float(row[class_name])
             )
 
-        return image, label
+        labels = torch.tensor(
+            labels,
+            dtype=torch.float32
+        )
+
+        return image, labels
 
 
 # ============================================================
@@ -214,10 +212,7 @@ train_transform = transforms.Compose(
     [
 
         transforms.Resize(
-            (
-                IMAGE_SIZE,
-                IMAGE_SIZE
-            )
+            (IMAGE_SIZE, IMAGE_SIZE)
         ),
 
         transforms.RandomHorizontalFlip(
@@ -256,10 +251,7 @@ val_transform = transforms.Compose(
     [
 
         transforms.Resize(
-            (
-                IMAGE_SIZE,
-                IMAGE_SIZE
-            )
+            (IMAGE_SIZE, IMAGE_SIZE)
         ),
 
         transforms.ToTensor(),
@@ -287,17 +279,13 @@ val_transform = transforms.Compose(
 
 def load_data():
 
-    print(
-        "\nLoading training CSV..."
-    )
+    print("\nLoading training CSV...")
 
     train_df = pd.read_csv(
         TRAIN_CSV
     )
 
-    print(
-        "Loading validation CSV..."
-    )
+    print("Loading validation CSV...")
 
     val_df = pd.read_csv(
         VAL_CSV
@@ -314,213 +302,49 @@ def load_data():
     )
 
     # --------------------------------------------------------
-    # Verify expected columns
+    # Verify required columns
     # --------------------------------------------------------
 
-    required_columns = {
-        "image_id",
-        "project_class",
-        "class_id",
-    }
-
-    missing_train = (
-        required_columns
-        - set(train_df.columns)
+    required_columns = (
+        ["image_id"]
+        + CLASS_NAMES
     )
 
-    missing_val = (
-        required_columns
-        - set(val_df.columns)
-    )
+    missing_train = [
+        col
+        for col in required_columns
+        if col not in train_df.columns
+    ]
+
+    missing_val = [
+        col
+        for col in required_columns
+        if col not in val_df.columns
+    ]
 
     if missing_train:
 
         raise ValueError(
-            "Training CSV is missing "
-            f"columns: {missing_train}"
+            "Training CSV is missing columns: "
+            f"{missing_train}"
         )
 
     if missing_val:
 
         raise ValueError(
-            "Validation CSV is missing "
-            f"columns: {missing_val}"
+            "Validation CSV is missing columns: "
+            f"{missing_val}"
         )
 
     print(
-        "\nCSV columns verified:"
-    )
-
-    print(
-        train_df.columns.tolist()
+        "\nMulti-label CSV verified."
     )
 
     return train_df, val_df
 
 
 # ============================================================
-# CLASS DISTRIBUTION
-# ============================================================
-
-def print_class_distribution(
-    train_df,
-    val_df
-):
-
-    print(
-        "\n" + "=" * 60
-    )
-
-    print(
-        "CLASS DISTRIBUTION"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    print(
-        "\nTraining:"
-    )
-
-    train_counts = (
-        train_df["class_id"]
-        .value_counts()
-        .sort_index()
-    )
-
-    for class_id in range(
-        NUM_CLASSES
-    ):
-
-        count = int(
-            train_counts.get(
-                class_id,
-                0
-            )
-        )
-
-        print(
-            f"{class_id} "
-            f"{CLASS_NAMES[class_id]:<22} "
-            f"{count}"
-        )
-
-    print(
-        "\nValidation:"
-    )
-
-    val_counts = (
-        val_df["class_id"]
-        .value_counts()
-        .sort_index()
-    )
-
-    for class_id in range(
-        NUM_CLASSES
-    ):
-
-        count = int(
-            val_counts.get(
-                class_id,
-                0
-            )
-        )
-
-        print(
-            f"{class_id} "
-            f"{CLASS_NAMES[class_id]:<22} "
-            f"{count}"
-        )
-
-
-# ============================================================
-# WEIGHTED RANDOM SAMPLER
-# ============================================================
-
-def create_weighted_sampler(
-    train_df
-):
-
-    print(
-        "\nCreating WeightedRandomSampler..."
-    )
-
-    # IMPORTANT:
-    # The CSV column is "class_id".
-    class_counts = (
-        train_df["class_id"]
-        .value_counts()
-        .sort_index()
-    )
-
-    print(
-        "\nTraining class counts:"
-    )
-
-    print(
-        class_counts
-    )
-
-    # Inverse-frequency weighting
-
-    class_weights = {}
-
-    for class_id in range(
-        NUM_CLASSES
-    ):
-
-        count = class_counts.get(
-            class_id,
-            0
-        )
-
-        if count > 0:
-
-            class_weights[
-                class_id
-            ] = 1.0 / float(count)
-
-        else:
-
-            class_weights[
-                class_id
-            ] = 0.0
-
-    sample_weights = []
-
-    for label in train_df[
-        "class_id"
-    ]:
-
-        sample_weights.append(
-            class_weights[
-                int(label)
-            ]
-        )
-
-    sample_weights = torch.tensor(
-        sample_weights,
-        dtype=torch.double
-    )
-
-    sampler = WeightedRandomSampler(
-        weights=sample_weights,
-        num_samples=len(
-            sample_weights
-        ),
-        replacement=True
-    )
-
-    print(
-        "Weighted sampling enabled."
-    )
-
-    return sampler
-
-
-# ============================================================
-# CREATE RESNET-50
+# CREATE MODEL
 # ============================================================
 
 def create_model():
@@ -546,36 +370,17 @@ def create_model():
     except Exception as error:
 
         print(
-            "\nWARNING:"
-        )
-
-        print(
-            "Could not load pretrained "
-            "ResNet-50 weights."
+            "\nWARNING: Could not load "
+            "pretrained weights."
         )
 
         print(
             f"Reason: {error}"
         )
 
-        print(
-            "Using ResNet-50 without "
-            "pretrained weights."
-        )
-
         model = models.resnet50(
             weights=None
         )
-
-    # --------------------------------------------------------
-    # Replace ImageNet classifier
-    #
-    # Original:
-    # 2048 -> 1000
-    #
-    # Ours:
-    # 2048 -> 5
-    # --------------------------------------------------------
 
     input_features = (
         model.fc.in_features
@@ -587,6 +392,74 @@ def create_model():
     )
 
     return model
+
+
+# ============================================================
+# CALCULATE POSITIVE WEIGHTS
+# ============================================================
+
+def calculate_pos_weights(
+    train_df
+):
+
+    print(
+        "\nCalculating positive class weights..."
+    )
+
+    positive_counts = (
+        train_df[CLASS_NAMES]
+        .sum()
+        .values
+    )
+
+    total_samples = len(
+        train_df
+    )
+
+    pos_weights = []
+
+    for count in positive_counts:
+
+        count = float(count)
+
+        if count > 0:
+
+            weight = (
+                total_samples - count
+            ) / count
+
+        else:
+
+            weight = 1.0
+
+        # Avoid excessively huge weights
+        weight = min(
+            weight,
+            20.0
+        )
+
+        pos_weights.append(
+            weight
+        )
+
+    pos_weights = torch.tensor(
+        pos_weights,
+        dtype=torch.float32
+    )
+
+    print("\nPositive weights:")
+
+    for i, class_name in enumerate(
+        CLASS_NAMES
+    ):
+
+        print(
+            f"{i:2d} "
+            f"{class_name:<25} "
+            f"{pos_weights[i].item():.4f}"
+        )
+
+    return pos_weights
 
 
 # ============================================================
@@ -605,10 +478,6 @@ def train_one_epoch(
 
     running_loss = 0.0
 
-    all_labels = []
-
-    all_predictions = []
-
     total = 0
 
     for batch_index, (
@@ -624,44 +493,20 @@ def train_one_epoch(
             device
         )
 
-        # ----------------------------------------------------
-        # Clear gradients
-        # ----------------------------------------------------
-
         optimizer.zero_grad()
-
-        # ----------------------------------------------------
-        # Forward pass
-        # ----------------------------------------------------
 
         outputs = model(
             images
         )
-
-        # ----------------------------------------------------
-        # Loss
-        # ----------------------------------------------------
 
         loss = criterion(
             outputs,
             labels
         )
 
-        # ----------------------------------------------------
-        # Backpropagation
-        # ----------------------------------------------------
-
         loss.backward()
 
-        # ----------------------------------------------------
-        # Update weights
-        # ----------------------------------------------------
-
         optimizer.step()
-
-        # ----------------------------------------------------
-        # Statistics
-        # ----------------------------------------------------
 
         batch_size = (
             images.size(0)
@@ -674,30 +519,6 @@ def train_one_epoch(
 
         total += batch_size
 
-        predictions = (
-            outputs.argmax(
-                dim=1
-            )
-        )
-
-        all_labels.extend(
-            labels
-            .detach()
-            .cpu()
-            .numpy()
-        )
-
-        all_predictions.extend(
-            predictions
-            .detach()
-            .cpu()
-            .numpy()
-        )
-
-        # ----------------------------------------------------
-        # Progress
-        # ----------------------------------------------------
-
         if (
             (batch_index + 1) % 100
             == 0
@@ -709,31 +530,8 @@ def train_one_epoch(
                 f"{len(loader)}"
             )
 
-    epoch_loss = (
-        running_loss
-        / total
-    )
-
-    epoch_accuracy = (
-        accuracy_score(
-            all_labels,
-            all_predictions
-        )
-    )
-
-    epoch_f1 = (
-        f1_score(
-            all_labels,
-            all_predictions,
-            average="macro",
-            zero_division=0
-        )
-    )
-
     return (
-        epoch_loss,
-        epoch_accuracy,
-        epoch_f1
+        running_loss / total
     )
 
 
@@ -756,8 +554,6 @@ def validate(
 
     all_labels = []
 
-    all_predictions = []
-
     all_probabilities = []
 
     with torch.no_grad():
@@ -772,17 +568,9 @@ def validate(
                 device
             )
 
-            # ------------------------------------------------
-            # Forward pass
-            # ------------------------------------------------
-
             outputs = model(
                 images
             )
-
-            # ------------------------------------------------
-            # Validation loss
-            # ------------------------------------------------
 
             loss = criterion(
                 outputs,
@@ -800,103 +588,176 @@ def validate(
 
             total += batch_size
 
-            # ------------------------------------------------
-            # Probabilities
-            # ------------------------------------------------
-
             probabilities = (
-                torch.softmax(
-                    outputs,
-                    dim=1
+                torch.sigmoid(
+                    outputs
                 )
             )
 
-            # ------------------------------------------------
-            # Predictions
-            # ------------------------------------------------
-
-            predictions = (
-                outputs.argmax(
-                    dim=1
-                )
-            )
-
-            all_labels.extend(
+            all_labels.append(
                 labels
                 .cpu()
                 .numpy()
             )
 
-            all_predictions.extend(
-                predictions
-                .cpu()
-                .numpy()
-            )
-
-            all_probabilities.extend(
+            all_probabilities.append(
                 probabilities
                 .cpu()
                 .numpy()
             )
 
     epoch_loss = (
-        running_loss
-        / total
+        running_loss / total
     )
 
-    epoch_accuracy = (
-        accuracy_score(
-            all_labels,
-            all_predictions
-        )
+    all_labels = np.concatenate(
+        all_labels,
+        axis=0
     )
 
-    epoch_f1 = (
-        f1_score(
-            all_labels,
-            all_predictions,
-            average="macro",
-            zero_division=0
-        )
+    all_probabilities = np.concatenate(
+        all_probabilities,
+        axis=0
     )
 
     # --------------------------------------------------------
-    # AUC-ROC
+    # Threshold predictions
     # --------------------------------------------------------
 
-    probabilities = np.array(
-        all_probabilities
+    predictions = (
+        all_probabilities >= 0.5
+    ).astype(int)
+
+    # --------------------------------------------------------
+    # Macro F1
+    # --------------------------------------------------------
+
+    epoch_f1 = f1_score(
+        all_labels,
+        predictions,
+        average="macro",
+        zero_division=0
     )
 
-    labels_array = np.array(
-        all_labels
-    )
+    # --------------------------------------------------------
+    # AUC
+    # --------------------------------------------------------
 
-    try:
+    class_aucs = []
 
-        epoch_auc = (
-            roc_auc_score(
-                labels_array,
-                probabilities,
-                multi_class="ovr",
-                average="macro"
+    for class_id in range(
+        NUM_CLASSES
+    ):
+
+        y_true = (
+            all_labels[:, class_id]
+        )
+
+        y_score = (
+            all_probabilities[:, class_id]
+        )
+
+        # AUC requires both positive
+        # and negative examples.
+        if (
+            len(np.unique(y_true))
+            > 1
+        ):
+
+            auc = roc_auc_score(
+                y_true,
+                y_score
             )
-        )
 
-    except ValueError:
+            class_aucs.append(
+                auc
+            )
+
+    if class_aucs:
 
         epoch_auc = float(
-            "nan"
+            np.mean(class_aucs)
         )
+
+    else:
+
+        epoch_auc = float("nan")
 
     return (
         epoch_loss,
-        epoch_accuracy,
         epoch_f1,
         epoch_auc,
         all_labels,
-        all_predictions
+        all_probabilities
     )
+
+
+# ============================================================
+# PRINT PER-CLASS METRICS
+# ============================================================
+
+def print_per_class_metrics(
+    labels,
+    probabilities
+):
+
+    predictions = (
+        probabilities >= 0.5
+    ).astype(int)
+
+    print(
+        "\n" + "=" * 70
+    )
+
+    print(
+        "PER-CLASS VALIDATION METRICS"
+    )
+
+    print(
+        "=" * 70
+    )
+
+    for class_id, class_name in enumerate(
+        CLASS_NAMES
+    ):
+
+        y_true = (
+            labels[:, class_id]
+        )
+
+        y_pred = (
+            predictions[:, class_id]
+        )
+
+        y_score = (
+            probabilities[:, class_id]
+        )
+
+        f1 = f1_score(
+            y_true,
+            y_pred,
+            zero_division=0
+        )
+
+        if len(
+            np.unique(y_true)
+        ) > 1:
+
+            auc = roc_auc_score(
+                y_true,
+                y_score
+            )
+
+        else:
+
+            auc = float("nan")
+
+        print(
+            f"{class_id:2d} "
+            f"{class_name:<25} "
+            f"F1={f1:.4f} "
+            f"AUC={auc:.4f}"
+        )
 
 
 # ============================================================
@@ -908,43 +769,35 @@ def main():
     set_seed()
 
     print(
-        "=" * 60
+        "=" * 70
     )
 
     print(
-        "RESNET-50 CLASSIFICATION TRAINING"
+        "RESNET-50 15-CLASS MULTI-LABEL TRAINING"
     )
 
     print(
-        "=" * 60
+        "=" * 70
     )
 
     print(
-        f"Device       : {DEVICE}"
+        f"Device     : {DEVICE}"
     )
 
     print(
-        f"Epochs       : {NUM_EPOCHS}"
+        f"Classes    : {NUM_CLASSES}"
     )
 
     print(
-        f"Batch size   : {BATCH_SIZE}"
+        f"Epochs     : {NUM_EPOCHS}"
     )
 
     print(
-        f"Image size   : {IMAGE_SIZE}"
+        f"Batch size : {BATCH_SIZE}"
     )
 
     print(
-        f"Train CSV    : {TRAIN_CSV}"
-    )
-
-    print(
-        f"Validation   : {VAL_CSV}"
-    )
-
-    print(
-        f"Output       : {OUTPUT_DIR}"
+        f"Image size : {IMAGE_SIZE}"
     )
 
     # ========================================================
@@ -952,11 +805,6 @@ def main():
     # ========================================================
 
     train_df, val_df = load_data()
-
-    print_class_distribution(
-        train_df,
-        val_df
-    )
 
     # ========================================================
     # DATASETS
@@ -981,23 +829,13 @@ def main():
     )
 
     # ========================================================
-    # SAMPLER
-    # ========================================================
-
-    sampler = (
-        create_weighted_sampler(
-            train_df
-        )
-    )
-
-    # ========================================================
     # DATALOADERS
     # ========================================================
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=BATCH_SIZE,
-        sampler=sampler,
+        shuffle=True,
         num_workers=0
     )
 
@@ -1006,6 +844,16 @@ def main():
         batch_size=BATCH_SIZE,
         shuffle=False,
         num_workers=0
+    )
+
+    print(
+        f"Training batches   : "
+        f"{len(train_loader)}"
+    )
+
+    print(
+        f"Validation batches : "
+        f"{len(val_loader)}"
     )
 
     # ========================================================
@@ -1019,90 +867,34 @@ def main():
     )
 
     print(
-        "ResNet-50 model ready."
+        "\nResNet-50 model ready."
     )
 
     # ========================================================
-    # CLASS-WEIGHTED LOSS
+    # LOSS
     # ========================================================
 
-    print(
-        "\nCreating class-weighted loss..."
-    )
-
-    class_counts = (
-        train_df["class_id"]
-        .value_counts()
-        .sort_index()
-    )
-
-    class_weights = []
-
-    for class_id in range(
-        NUM_CLASSES
-    ):
-
-        count = class_counts.get(
-            class_id,
-            0
+    pos_weights = (
+        calculate_pos_weights(
+            train_df
         )
-
-        if count > 0:
-
-            class_weights.append(
-                1.0 / float(count)
-            )
-
-        else:
-
-            class_weights.append(
-                0.0
-            )
-
-    class_weights = torch.tensor(
-        class_weights,
-        dtype=torch.float32
     )
 
-    # Normalize average weight to 1
-
-    nonzero_weights = (
-        class_weights[
-            class_weights > 0
-        ]
-    )
-
-    if len(nonzero_weights) > 0:
-
-        class_weights = (
-            class_weights
-            / nonzero_weights.mean()
-        )
-
-    class_weights = (
-        class_weights.to(
+    pos_weights = (
+        pos_weights.to(
             DEVICE
         )
     )
 
-    print(
-        "\nClass weights:"
+    criterion = (
+        nn.BCEWithLogitsLoss(
+            pos_weight=pos_weights
+        )
     )
 
-    for class_id in range(
-        NUM_CLASSES
-    ):
-
-        print(
-            f"{class_id} - "
-            f"{CLASS_NAMES[class_id]}: "
-            f"{class_weights[class_id].item():.4f}"
-        )
-
-    criterion = (
-        nn.CrossEntropyLoss(
-            weight=class_weights
-        )
+    print(
+        "\nUsing BCEWithLogitsLoss "
+        "for multi-label classification."
     )
 
     # ========================================================
@@ -1115,10 +907,6 @@ def main():
         weight_decay=WEIGHT_DECAY
     )
 
-    # ========================================================
-    # LR SCHEDULER
-    # ========================================================
-
     scheduler = (
         torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer,
@@ -1129,31 +917,29 @@ def main():
     )
 
     # ========================================================
-    # TRAINING LOOP
+    # TRAINING
     # ========================================================
 
     best_val_loss = float(
         "inf"
     )
 
-    best_val_accuracy = 0.0
-
     history = []
 
     final_labels = None
 
-    final_predictions = None
+    final_probabilities = None
 
     print(
-        "\n" + "=" * 60
+        "\n" + "=" * 70
     )
 
     print(
-        "STARTING TRAINING"
+        "STARTING MULTI-LABEL TRAINING"
     )
 
     print(
-        "=" * 60
+        "=" * 70
     )
 
     for epoch in range(
@@ -1162,7 +948,7 @@ def main():
     ):
 
         print(
-            "\n" + "=" * 60
+            "\n" + "=" * 70
         )
 
         print(
@@ -1170,36 +956,33 @@ def main():
         )
 
         print(
-            "=" * 60
+            "=" * 70
         )
 
         # ----------------------------------------------------
-        # TRAIN
+        # Train
         # ----------------------------------------------------
 
-        (
-            train_loss,
-            train_accuracy,
-            train_f1
-        ) = train_one_epoch(
-            model,
-            train_loader,
-            criterion,
-            optimizer,
-            DEVICE
+        train_loss = (
+            train_one_epoch(
+                model,
+                train_loader,
+                criterion,
+                optimizer,
+                DEVICE
+            )
         )
 
         # ----------------------------------------------------
-        # VALIDATE
+        # Validate
         # ----------------------------------------------------
 
         (
             val_loss,
-            val_accuracy,
             val_f1,
             val_auc,
             val_labels,
-            val_predictions
+            val_probabilities
         ) = validate(
             model,
             val_loader,
@@ -1211,13 +994,9 @@ def main():
             val_labels
         )
 
-        final_predictions = (
-            val_predictions
+        final_probabilities = (
+            val_probabilities
         )
-
-        # ----------------------------------------------------
-        # Scheduler
-        # ----------------------------------------------------
 
         scheduler.step(
             val_loss
@@ -1236,57 +1015,35 @@ def main():
         )
 
         print(
-            f"Train loss     : "
+            f"Train loss : "
             f"{train_loss:.4f}"
         )
 
         print(
-            f"Train accuracy : "
-            f"{train_accuracy:.4f}"
-        )
-
-        print(
-            f"Train F1       : "
-            f"{train_f1:.4f}"
-        )
-
-        print(
-            f"Val loss       : "
+            f"Val loss   : "
             f"{val_loss:.4f}"
         )
 
         print(
-            f"Val accuracy   : "
-            f"{val_accuracy:.4f}"
-        )
-
-        print(
-            f"Val F1         : "
+            f"Val F1     : "
             f"{val_f1:.4f}"
         )
 
         print(
-            f"Val AUC-ROC    : "
+            f"Val AUC    : "
             f"{val_auc:.4f}"
         )
 
         print(
-            f"Learning rate  : "
+            f"LR         : "
             f"{current_lr:.6f}"
         )
-
-        # ----------------------------------------------------
-        # History
-        # ----------------------------------------------------
 
         history.append(
             {
                 "epoch": epoch,
                 "train_loss": train_loss,
-                "train_accuracy": train_accuracy,
-                "train_f1": train_f1,
                 "val_loss": val_loss,
-                "val_accuracy": val_accuracy,
                 "val_f1": val_f1,
                 "val_auc": (
                     None
@@ -1298,7 +1055,7 @@ def main():
         )
 
         # ----------------------------------------------------
-        # Save best checkpoint
+        # Save best model
         # ----------------------------------------------------
 
         if val_loss < best_val_loss:
@@ -1307,35 +1064,25 @@ def main():
                 val_loss
             )
 
-            best_val_accuracy = (
-                val_accuracy
-            )
-
             torch.save(
                 {
                     "epoch": epoch,
-
                     "model_state_dict":
                         model.state_dict(),
-
                     "optimizer_state_dict":
                         optimizer.state_dict(),
-
                     "val_loss":
                         val_loss,
-
-                    "val_accuracy":
-                        val_accuracy,
-
                     "val_f1":
                         val_f1,
-
                     "val_auc":
                         val_auc,
-
                     "class_names":
                         CLASS_NAMES,
-
+                    "num_classes":
+                        NUM_CLASSES,
+                    "image_size":
+                        IMAGE_SIZE,
                 },
                 BEST_MODEL_PATH
             )
@@ -1349,34 +1096,12 @@ def main():
             )
 
     # ========================================================
-    # CONFUSION MATRIX
+    # FINAL PER-CLASS METRICS
     # ========================================================
 
-    print(
-        "\n" + "=" * 60
-    )
-
-    print(
-        "VALIDATION CONFUSION MATRIX"
-    )
-
-    print(
-        "=" * 60
-    )
-
-    cm = confusion_matrix(
+    print_per_class_metrics(
         final_labels,
-        final_predictions,
-        labels=list(
-            range(NUM_CLASSES)
-        )
-    )
-
-    print(cm)
-
-    np.save(
-        CONFUSION_MATRIX_PATH,
-        cm
+        final_probabilities
     )
 
     # ========================================================
@@ -1387,22 +1112,18 @@ def main():
         {
             "model_state_dict":
                 model.state_dict(),
-
             "class_names":
                 CLASS_NAMES,
-
             "num_classes":
                 NUM_CLASSES,
-
             "image_size":
                 IMAGE_SIZE,
-
         },
         FINAL_MODEL_PATH
     )
 
     # ========================================================
-    # SAVE TRAINING HISTORY
+    # SAVE HISTORY
     # ========================================================
 
     with open(
@@ -1440,29 +1161,24 @@ def main():
         )
 
     # ========================================================
-    # FINAL SUMMARY
+    # SUMMARY
     # ========================================================
 
     print(
-        "\n" + "=" * 60
+        "\n" + "=" * 70
     )
 
     print(
-        "RESNET-50 TRAINING COMPLETED"
+        "MULTI-LABEL RESNET-50 TRAINING COMPLETED"
     )
 
     print(
-        "=" * 60
+        "=" * 70
     )
 
     print(
         f"Best validation loss : "
         f"{best_val_loss:.4f}"
-    )
-
-    print(
-        f"Best validation accuracy : "
-        f"{best_val_accuracy:.4f}"
     )
 
     print(
@@ -1489,19 +1205,10 @@ def main():
         HISTORY_PATH
     )
 
-    print(
-        f"\nConfusion matrix:"
-    )
-
-    print(
-        CONFUSION_MATRIX_PATH
-    )
-
 
 # ============================================================
 # ENTRY POINT
 # ============================================================
 
 if __name__ == "__main__":
-
     main()

@@ -1,379 +1,186 @@
-from pathlib import Path
-import shutil
-import random
-
 import pandas as pd
+from pathlib import Path
+from sklearn.model_selection import train_test_split
+import shutil
 
 
-# ============================================================
+# =========================
 # PATHS
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-
-INPUT_CSV = (
-    PROJECT_ROOT
-    / "data"
-    / "processed"
-    / "detection"
-    / "clean_annotations.csv"
-)
-
-IMAGE_SOURCE_DIR = (
-    PROJECT_ROOT
-    / "data"
-    / "raw"
-    / "vinbigdata"
-    / "train"
-)
-
-OUTPUT_DIR = (
-    PROJECT_ROOT
-    / "data"
-    / "processed"
-    / "classification"
-    / "resnet50"
-)
+# =========================
+INPUT_CSV = Path("data/processed/detection/clean_annotations.csv")
+IMAGE_SOURCE_DIR = Path("data/raw/vinbigdata/train")
+OUTPUT_DIR = Path("data/processed/classification/resnet50")
 
 
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-TRAIN_RATIO = 0.8
-RANDOM_SEED = 42
-
+# =========================
+# 15 CLASSES
+# =========================
 CLASS_NAMES = [
-    "Normal",
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
     "Cardiomegaly",
-    "Pleural effusion",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
     "Lung Opacity",
+    "Nodule/Mass",
+    "Normal",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
     "Pulmonary fibrosis",
 ]
 
 CLASS_TO_ID = {
-    "Normal": 0,
-    "Cardiomegaly": 1,
-    "Pleural effusion": 2,
-    "Lung Opacity": 3,
-    "Pulmonary fibrosis": 4,
+    name: idx for idx, name in enumerate(CLASS_NAMES)
 }
 
 
-# ============================================================
-# START
-# ============================================================
-
-print("=" * 60)
-print("RESNET-50 CLASSIFICATION DATASET PREPARATION")
-print("=" * 60)
-
-print(f"Input CSV       : {INPUT_CSV}")
-print(f"Image directory : {IMAGE_SOURCE_DIR}")
-print(f"Output directory: {OUTPUT_DIR}")
-
-
-# ============================================================
-# CHECK INPUTS
-# ============================================================
-
-if not INPUT_CSV.exists():
-    raise FileNotFoundError(
-        f"Annotation CSV not found:\n{INPUT_CSV}"
-    )
-
-if not IMAGE_SOURCE_DIR.exists():
-    raise FileNotFoundError(
-        f"Image directory not found:\n{IMAGE_SOURCE_DIR}"
-    )
-
-
-# ============================================================
+# =========================
 # LOAD ANNOTATIONS
-# ============================================================
-
-print("\nLoading cleaned annotations...")
-
+# =========================
+print("Loading annotations...")
 df = pd.read_csv(INPUT_CSV)
 
 print(f"Annotation rows: {len(df)}")
+print(f"Unique images: {df['image_id'].nunique()}")
 
 
-# ============================================================
-# VERIFY CLASSES
-# ============================================================
-
-missing_classes = set(CLASS_NAMES) - set(df["project_class"].unique())
-
-if missing_classes:
-    raise ValueError(
-        f"Missing expected classes: {missing_classes}"
-    )
-
-df = df[df["project_class"].isin(CLASS_NAMES)].copy()
-
-
-# ============================================================
-# IMAGE-LEVEL LABELS
-# ============================================================
-#
-# One image can have multiple annotation rows.
-# For classification, each image must have ONE label.
-#
-# If an image contains multiple abnormal classes, choose the
-# abnormal class with the highest number of annotations.
-#
-# Normal images remain Normal.
-# ============================================================
-
-print("\nCreating image-level labels...")
+# =========================
+# CREATE MULTI-LABEL TARGETS
+# =========================
+print("\nCreating multi-label targets...")
 
 image_labels = []
 
 for image_id, group in df.groupby("image_id"):
 
-    classes = group["project_class"].tolist()
+    classes = set(group["project_class"])
 
-    # Normal image
-    if all(cls == "Normal" for cls in classes):
+    # If an image has any abnormality,
+    # remove Normal from its labels.
+    abnormal_classes = classes - {"Normal"}
 
-        selected_class = "Normal"
-
+    if abnormal_classes:
+        classes = abnormal_classes
     else:
+        classes = {"Normal"}
 
-        abnormal_classes = [
-            cls for cls in classes
-            if cls != "Normal"
-        ]
+    labels = [0] * len(CLASS_NAMES)
 
-        # Select the most frequently occurring abnormal class.
-        selected_class = (
-            pd.Series(abnormal_classes)
-            .value_counts()
-            .index[0]
-        )
+    for class_name in classes:
+        if class_name in CLASS_TO_ID:
+            labels[CLASS_TO_ID[class_name]] = 1
 
-    image_labels.append(
-        {
-            "image_id": image_id,
-            "project_class": selected_class,
-            "class_id": CLASS_TO_ID[selected_class],
-        }
-    )
+    row = {
+        "image_id": image_id,
+    }
+
+    for i, class_name in enumerate(CLASS_NAMES):
+        row[class_name] = labels[i]
+
+    image_labels.append(row)
 
 
-image_df = pd.DataFrame(image_labels)
+labels_df = pd.DataFrame(image_labels)
 
 
-# ============================================================
-# REMOVE MISSING IMAGES
-# ============================================================
+# =========================
+# VERIFY LABELS
+# =========================
+print(f"Images after grouping: {len(labels_df)}")
 
-print("\nChecking image files...")
+print("\nLabel counts:")
+for class_name in CLASS_NAMES:
+    print(f"{class_name:25s}: {labels_df[class_name].sum()}")
 
-image_df["image_path"] = image_df["image_id"].apply(
-    lambda x: IMAGE_SOURCE_DIR / f"{x}.png"
+
+# =========================
+# SPLIT DATA
+# =========================
+train_df, val_df = train_test_split(
+    labels_df,
+    test_size=0.20,
+    random_state=42,
+    shuffle=True,
 )
 
-exists_mask = image_df["image_path"].apply(Path.exists)
 
-missing_count = int((~exists_mask).sum())
-
-print(f"Images found   : {exists_mask.sum()}")
-print(f"Images missing : {missing_count}")
-
-image_df = image_df[exists_mask].copy()
+print("\nDataset split:")
+print(f"Train: {len(train_df)}")
+print(f"Val:   {len(val_df)}")
 
 
-# ============================================================
-# CLASS DISTRIBUTION
-# ============================================================
+# =========================
+# PREPARE OUTPUT DIRECTORIES
+# =========================
+if OUTPUT_DIR.exists():
+    shutil.rmtree(OUTPUT_DIR)
 
-print("\n")
-print("=" * 60)
-print("IMAGE-LEVEL CLASS DISTRIBUTION")
-print("=" * 60)
+(OUTPUT_DIR / "train").mkdir(parents=True)
+(OUTPUT_DIR / "val").mkdir(parents=True)
 
-distribution = (
-    image_df["project_class"]
-    .value_counts()
-    .reindex(CLASS_NAMES, fill_value=0)
-)
 
-for class_name, count in distribution.items():
+# =========================
+# COPY IMAGES
+# =========================
+def copy_images(split_df, split_name):
+
+    destination = OUTPUT_DIR / split_name
+
+    copied = 0
+    missing = 0
+
+    for _, row in split_df.iterrows():
+
+        image_id = row["image_id"]
+
+        source = IMAGE_SOURCE_DIR / f"{image_id}.png"
+        target = destination / f"{image_id}.png"
+
+        if source.exists():
+            shutil.copy2(source, target)
+            copied += 1
+        else:
+            missing += 1
 
     print(
-        f"{CLASS_TO_ID[class_name]}   "
-        f"{class_name:<22} "
-        f"{count}"
+        f"{split_name}: copied={copied}, missing={missing}"
     )
 
 
-# ============================================================
-# TRAIN / VALIDATION SPLIT
-# ============================================================
-
-print("\nCreating stratified train/validation split...")
-
-random.seed(RANDOM_SEED)
-
-train_parts = []
-val_parts = []
-
-for class_name in CLASS_NAMES:
-
-    class_df = image_df[
-        image_df["project_class"] == class_name
-    ].copy()
-
-    indices = list(class_df.index)
-
-    random.shuffle(indices)
-
-    split_index = int(len(indices) * TRAIN_RATIO)
-
-    train_indices = indices[:split_index]
-    val_indices = indices[split_index:]
-
-    train_parts.append(class_df.loc[train_indices])
-    val_parts.append(class_df.loc[val_indices])
+copy_images(train_df, "train")
+copy_images(val_df, "val")
 
 
-train_df = pd.concat(train_parts).sample(
-    frac=1,
-    random_state=RANDOM_SEED
-)
-
-val_df = pd.concat(val_parts).sample(
-    frac=1,
-    random_state=RANDOM_SEED
-)
-
-
-# ============================================================
-# CREATE DIRECTORIES
-# ============================================================
-
-train_dir = OUTPUT_DIR / "train"
-val_dir = OUTPUT_DIR / "val"
-
-for class_name in CLASS_NAMES:
-
-    (train_dir / class_name).mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    (val_dir / class_name).mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-
-# ============================================================
-# COPY IMAGES
-# ============================================================
-
-print("\nCopying training images...")
-
-for _, row in train_df.iterrows():
-
-    source = Path(row["image_path"])
-
-    destination = (
-        train_dir
-        / row["project_class"]
-        / source.name
-    )
-
-    shutil.copy2(source, destination)
-
-
-print("Copying validation images...")
-
-for _, row in val_df.iterrows():
-
-    source = Path(row["image_path"])
-
-    destination = (
-        val_dir
-        / row["project_class"]
-        / source.name
-    )
-
-    shutil.copy2(source, destination)
-
-
-# ============================================================
+# =========================
 # SAVE CSV FILES
-# ============================================================
-
-train_csv = OUTPUT_DIR / "train.csv"
-val_csv = OUTPUT_DIR / "val.csv"
-labels_csv = OUTPUT_DIR / "image_labels.csv"
-
-train_df.drop(
-    columns=["image_path"]
-).to_csv(
-    train_csv,
+# =========================
+train_df.to_csv(
+    OUTPUT_DIR / "train.csv",
     index=False
 )
 
-val_df.drop(
-    columns=["image_path"]
-).to_csv(
-    val_csv,
+val_df.to_csv(
+    OUTPUT_DIR / "val.csv",
     index=False
 )
 
-image_df.drop(
-    columns=["image_path"]
-).to_csv(
-    labels_csv,
+labels_df.to_csv(
+    OUTPUT_DIR / "image_labels.csv",
     index=False
 )
 
 
-# ============================================================
-# FINAL VALIDATION
-# ============================================================
+# =========================
+# SAVE CLASS NAMES
+# =========================
+with open(OUTPUT_DIR / "class_names.txt", "w", encoding="utf-8") as f:
+    for i, class_name in enumerate(CLASS_NAMES):
+        f.write(f"{i}: {class_name}\n")
 
-print("\n")
-print("=" * 60)
-print("RESNET-50 DATASET VALIDATION")
-print("=" * 60)
 
-print(f"Total images      : {len(image_df)}")
-print(f"Training images   : {len(train_df)}")
-print(f"Validation images : {len(val_df)}")
-
-print("\nTraining distribution:")
-
-print(
-    train_df["project_class"]
-    .value_counts()
-    .reindex(CLASS_NAMES, fill_value=0)
-    .to_string()
-)
-
-print("\nValidation distribution:")
-
-print(
-    val_df["project_class"]
-    .value_counts()
-    .reindex(CLASS_NAMES, fill_value=0)
-    .to_string()
-)
-
-print("\n")
-print("=" * 60)
-print("RESNET-50 DATASET PREPARATION COMPLETED")
-print("=" * 60)
-
-print(f"Output directory: {OUTPUT_DIR}")
-print(f"Train CSV       : {train_csv}")
-print(f"Validation CSV  : {val_csv}")
-print(f"Labels CSV      : {labels_csv}")
-
-print("\nNext stage:")
-print("Create ResNet-50 training pipeline")
+print("\nDataset preparation complete!")
+print(f"Output: {OUTPUT_DIR}")
