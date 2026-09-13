@@ -5,7 +5,7 @@ import json
 import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
 from PIL import Image
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -14,6 +14,7 @@ from app.config import settings
 from app.db import get_db
 from app.exceptions import NotFoundError
 from app.models import Image as ImageModel, Patient, Prediction
+from app.rate_limit import limiter
 from app.schemas import ImageDetail, ImageListItem, ImageResponse, PaginatedResponse, PredictionRecord
 from app.storage import delete_file, save_image
 
@@ -21,7 +22,9 @@ router = APIRouter(prefix="/images", tags=["images"])
 
 
 @router.post("/upload", response_model=ImageResponse, status_code=201)
+@limiter.limit("10/minute")
 async def upload_image(
+    request: Request,
     file: UploadFile,
     patient_id: int | None = None,
     db: Session = Depends(get_db),

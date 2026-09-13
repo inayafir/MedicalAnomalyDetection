@@ -5,7 +5,7 @@ import json
 import os
 from functools import partial
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from PIL import Image
 from sqlalchemy.orm import Session
 
@@ -15,6 +15,7 @@ from app.exceptions import AggregationError, NotFoundError
 from app.aggregation import build_prediction_record
 from app.ml_interface import is_model_loaded, predict
 from app.models import CLASSIFIER_CLASSES, Image as ImageModel, Prediction
+from app.rate_limit import limiter
 from app.schemas import PaginatedResponse, PredictionListItem, PredictionRecord
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
@@ -23,7 +24,8 @@ _VALID_CLASSIFIER = set(CLASSIFIER_CLASSES)
 
 
 @router.post("/{image_id}", response_model=PredictionRecord, status_code=201)
-async def create_prediction(image_id: int, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+async def create_prediction(request: Request, image_id: int, db: Session = Depends(get_db)):
     if not is_model_loaded():
         from fastapi import HTTPException
         raise HTTPException(status_code=503, detail="ML models not loaded — cannot run prediction")

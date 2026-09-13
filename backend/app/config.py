@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    ENVIRONMENT: str = "development"
+
     DATABASE_URL: str = "sqlite:///./storage/dev.db"
     STORAGE_ROOT: str = "./storage"
     MAX_UPLOAD_SIZE_MB: int = 10
@@ -14,6 +17,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "*"
     RESNET_CHECKPOINT: str = "ml_core/checkpoints/resnet50.pth"
     YOLO_CHECKPOINT: str = "ml_core/checkpoints/yolov8m_14class.pt"
+
+    API_KEY: Optional[str] = None
+    SENTRY_DSN: Optional[str] = None
+    RATE_LIMIT_PER_MINUTE: int = 10
+    DATA_RETENTION_DAYS: int = 0
 
     @property
     def allowed_content_types_list(self) -> list[str]:
@@ -26,6 +34,10 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.CORS_ORIGINS.split(",")]
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT == "production"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
