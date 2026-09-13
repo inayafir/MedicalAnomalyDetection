@@ -29,7 +29,7 @@ Server runs at **http://localhost:8000**. Interactive docs at **http://localhost
 
 ### Checkpoint setup
 
-This project uses **Git LFS** to track the ~334MB of model checkpoint files (`resnet50.pth`, `yolov8m_14class.pt`). If you cloned without LFS installed, the checkpoint files will be text pointer stubs and the server will fail at startup with an actionable error message.
+This project uses **Git LFS** to track the model checkpoint files (`resnet50.pth`, `yolov8m_14class.pt`). If you cloned without LFS installed, the checkpoint files will be text pointer stubs and the server will fail at startup with an actionable error message.
 
 To fix: install [Git LFS](https://git-lfs.com/), then run `git lfs pull` from the repo root.
 
@@ -39,39 +39,68 @@ cd backend
 docker compose up --build
 ```
 
-## 2. Unified 15-Class Taxonomy
+## 2. Two Label Sets — Why They're Different
 
-Both the ResNet-50 classifier and YOLOv8m detector have been retrained on the same 15-class VinBigData taxonomy.
+The backend uses **two separate models** that output **different label sets** for different tasks. They are intentionally not merged into one enum.
 
-### Classification (ResNet-50, 15 classes)
+### Classifier (ResNet-50, 15 classes)
 
 Produces a single **whole-image label**. This is the top-level `predicted_class` field.
 
-### Detection (YOLOv8m, 14 abnormality classes)
-
-Produces **per-region bounding boxes**, each with its own label. These are the `bboxes[].class` fields. The YOLO model has no "Normal" class — if nothing is detected, the bboxes list is empty.
-
-### Classes
-
 | Index | Class Name |
 |-------|------------|
-| 0 | Normal |
-| 1 | Aortic enlargement |
-| 2 | Atelectasis |
-| 3 | Calcification |
-| 4 | Cardiomegaly |
-| 5 | Consolidation |
-| 6 | ILD |
-| 7 | Infiltration |
-| 8 | Lung Opacity |
-| 9 | Nodule/Mass |
+| 0 | Aortic enlargement |
+| 1 | Atelectasis |
+| 2 | Calcification |
+| 3 | Cardiomegaly |
+| 4 | Consolidation |
+| 5 | ILD |
+| 6 | Infiltration |
+| 7 | Lung Opacity |
+| 8 | Nodule/Mass |
+| 9 | Normal |
 | 10 | Other lesion |
 | 11 | Pleural effusion |
 | 12 | Pleural thickening |
 | 13 | Pneumothorax |
 | 14 | Pulmonary fibrosis |
 
-Source: `checkpoint["class_names"]` (ResNet) / `model.names` (YOLO) at load time. The server validates class counts at startup and fails if they don't match (15 expected for both).
+Source: `checkpoint["class_names"]` from `ml_core/checkpoints/resnet50.pth`
+
+### Detector (YOLOv8m, 14 disease classes)
+
+Produces **per-region bounding boxes**, each with its own label. These are the `bboxes[].class` fields. The detector has no "Normal" class — if nothing is detected, the bboxes list is empty.
+
+| Index | Class Name |
+|-------|------------|
+| 0 | Aortic enlargement |
+| 1 | Atelectasis |
+| 2 | Calcification |
+| 3 | Cardiomegaly |
+| 4 | Consolidation |
+| 5 | ILD |
+| 6 | Infiltration |
+| 7 | Lung Opacity |
+| 8 | Nodule/Mass |
+| 9 | Other lesion |
+| 10 | Pleural effusion |
+| 11 | Pleural thickening |
+| 12 | Pneumothorax |
+| 13 | Pulmonary fibrosis |
+
+Source: `model.names` from `ml_core/checkpoints/yolov8m_14class.pt`
+
+**Why two sets?** The classifier gives a single overall impression (one label for the whole image). The detector finds specific regions and labels them with finer granularity. For example, the classifier might say "Normal" while the detector still finds a small "Atelectasis" region — or the classifier might say "Cardiomegaly" while the detector also finds "Aortic enlargement" in the same image. Both pieces of information are useful; collapsing them into one set would silently lose information.
+
+If the frontend needs a simplified "does this box match the overall finding" view, that's a **display decision** — not something baked into the backend contract.
+
+### The 14 detector names are a subset of the 15 classifier names
+
+The 14 YOLO classes are exactly the 14 VinBigData abnormality findings. The 15 ResNet classes are those same 14 findings plus `"Normal"` (i.e. "no finding detected"). `"Normal"` is the only class present in the classifier but absent from the detector, because you cannot draw a bounding box for the *absence* of a finding.
+
+### Edge case: "Normal" classifier + non-empty bboxes
+
+This is a valid scenario — the classifier's holistic assessment is "Normal" but YOLO still identifies small regions. The backend passes both outputs through without reconciliation; the frontend should decide how to display this (e.g. show a "Normal" badge but still render the bboxes). This is documented here so Person C's UI doesn't assume the two always agree.
 
 ## 3. API Reference
 
@@ -103,7 +132,7 @@ curl -X POST http://localhost:8000/images/upload \
 curl -X POST http://localhost:8000/predictions/1
 ```
 
-**Example prediction response** (note: top-level `class` is from the 5-class classifier; bbox classes are from the 14-class detector):
+**Example prediction response** (top-level `class` from 15-class classifier, bbox classes from 14-class detector):
 ```json
 {
   "id": 1,
@@ -116,6 +145,18 @@ curl -X POST http://localhost:8000/predictions/1
   ],
   "heatmap_path": "heatmaps/2026/08/31/abc123.png",
   "created_at": "2026-08-31T21:00:00Z"
+}
+```
+
+**Example showing legitimate model disagreement:**
+```json
+{
+  "predicted_class": "Normal",
+  "confidence": 0.60,
+  "bboxes": [
+    {"class_": "Atelectasis", "confidence": 0.75, "x1": 10, "y1": 20, "x2": 100, "y2": 200}
+  ],
+  "heatmap_path": "heatmaps/2026/08/31/def456.png"
 }
 ```
 
@@ -175,11 +216,11 @@ Deleting an `Image` cascades to delete its `Prediction` rows, which cascade to d
 
 ```
 backend/ml_core/checkpoints/
-├── resnet50.pth              # ResNet-50 classifier (5 classes)
+├── resnet50.pth              # ResNet-50 classifier (15 classes)
 └── yolov8m_14class.pt        # YOLOv8m detector (14 disease classes)
 ```
 
-Paths are configurable via `RESNET_CHECKPOINT` and `YOLO_CHECKPOINT` env vars (defaults shown above). To swap checkpoints, update the env vars — the server validates class counts at startup and fails loudly if they don't match expectations (5 for ResNet, 14 for YOLO).
+Paths are configurable via `RESNET_CHECKPOINT` and `YOLO_CHECKPOINT` env vars. To swap checkpoints, update the env vars — the server validates class counts at startup (15 for ResNet, 14 for YOLO) and fails loudly if they don't match.
 
 ### Storage
 
@@ -202,7 +243,7 @@ http://localhost:8000/files/{heatmap_path}
 - **No PDF generation** — `/reports` creates a DB row with `pdf_path = null`
 - **CORS wide open by default** (`*`) — lock down `CORS_ORIGINS` env var before deployment
 - **Inference latency on CPU**: ~2-5 seconds per prediction (ResNet-50 + Grad-CAM). Plan frontend loading states accordingly.
-- **ResNet-50 is a 5-class classifier** — it cannot distinguish between all 14 disease types; for that, rely on the YOLO detector's per-bbox labels
+- **Classifier and detector may disagree** — the backend passes both outputs through; the frontend should handle cases where e.g. classifier says "Normal" but detector still finds regions
 - **No deployment/CI configuration**
 
 ## 7. Running Tests

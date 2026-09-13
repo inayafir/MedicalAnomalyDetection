@@ -2,7 +2,7 @@ import io
 
 import pytest
 
-from app.models import UNIFIED_CLASSES, FindingClass
+from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES, ClassifierClass, DetectorClass
 
 
 class TestCreatePrediction:
@@ -24,9 +24,8 @@ class TestCreatePrediction:
         data = resp.json()
         assert "id" in data
         assert data["image_id"] == image_id
-        # Top-level class must be one of the 15 unified classes
-        assert data["predicted_class"] in UNIFIED_CLASSES
-        assert data["predicted_class"] in [c.value for c in FindingClass]
+        assert data["predicted_class"] in CLASSIFIER_CLASSES
+        assert data["predicted_class"] in [c.value for c in ClassifierClass]
         assert 0 <= data["confidence"] <= 1
         assert isinstance(data["bboxes"], list)
         assert "heatmap_path" in data
@@ -36,19 +35,15 @@ class TestCreatePrediction:
         image_id = self._upload_image(client)
         resp = client.post(f"/predictions/{image_id}")
         data = resp.json()
-        if data["predicted_class"] == "Normal":
-            assert data["bboxes"] == []
-        else:
-            for bbox in data["bboxes"]:
-                assert "class_" in bbox or "class" in bbox
-                class_key = "class_" if "class_" in bbox else "class"
-                # Bbox class must be one of the 15 unified classes
-                assert bbox[class_key] in UNIFIED_CLASSES
-                assert "x1" in bbox and "y1" in bbox
-                assert "x2" in bbox and "y2" in bbox
-                assert "confidence" in bbox
-                assert bbox["x2"] > bbox["x1"]
-                assert bbox["y2"] > bbox["y1"]
+        for bbox in data["bboxes"]:
+            assert "class_" in bbox or "class" in bbox
+            class_key = "class_" if "class_" in bbox else "class"
+            assert bbox[class_key] in DETECTOR_CLASSES
+            assert "x1" in bbox and "y1" in bbox
+            assert "x2" in bbox and "y2" in bbox
+            assert "confidence" in bbox
+            assert bbox["x2"] > bbox["x1"]
+            assert bbox["y2"] > bbox["y1"]
 
     def test_prediction_creates_two_rows(self, client):
         image_id = self._upload_image(client)
@@ -91,19 +86,19 @@ class TestRealModelPrediction:
     """Tests that exercise the real ML models. Slow — skip with -m 'not integration'."""
 
     def test_checkpoint_class_counts(self):
-        """Verify checkpoint class counts match expectations at import time."""
-        from app.models import UNIFIED_CLASSES
-        assert len(UNIFIED_CLASSES) == 15, f"Expected 15 unified classes, got {len(UNIFIED_CLASSES)}"
+        from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES
+        assert len(CLASSIFIER_CLASSES) == 15
+        assert len(DETECTOR_CLASSES) == 14
+        assert "Normal" in CLASSIFIER_CLASSES
+        assert "Normal" not in DETECTOR_CLASSES
 
     def test_ml_interface_direct(self):
         from app.ml_interface import predict, is_model_loaded, load_models, get_classifier_classes, get_detector_classes
 
-        # Ensure models are loaded (lifespan doesn't run in standalone tests)
         if not is_model_loaded():
             load_models()
         assert is_model_loaded(), "Models should be loaded for integration test"
 
-        # Create a temp image
         img_bytes = io.BytesIO()
         from PIL import Image
         Image.new("RGB", (200, 200), (100, 100, 100)).save(img_bytes, format="PNG")
@@ -122,23 +117,21 @@ class TestRealModelPrediction:
 
         result = predict(rel_path, 200, 200)
 
-        # Top-level class from unified 15-class taxonomy
-        unified_classes = get_classifier_classes()
-        assert result["class"] in unified_classes, (
-            f"Top-level class {result['class']!r} not in unified classes: {unified_classes}"
+        classifier_classes = get_classifier_classes()
+        detector_classes = get_detector_classes()
+
+        assert result["class"] in classifier_classes, (
+            f"Top-level class {result['class']!r} not in classifier classes: {classifier_classes}"
         )
         assert 0 <= result["confidence"] <= 1
 
-        # Bbox classes from unified 15-class taxonomy
-        detector_classes = get_detector_classes()
         for bbox in result["bboxes"]:
             assert bbox["class"] in detector_classes, (
-                f"Bbox class {bbox['class']!r} not in unified classes: {detector_classes}"
+                f"Bbox class {bbox['class']!r} not in detector classes: {detector_classes}"
             )
             assert 0 <= bbox["confidence"] <= 1
             assert bbox["x1"] < bbox["x2"]
             assert bbox["y1"] < bbox["y2"]
-            # Coordinates should be within original image bounds
             assert 0 <= bbox["x1"] < 200
             assert 0 <= bbox["y1"] < 200
             assert bbox["x2"] <= 200
