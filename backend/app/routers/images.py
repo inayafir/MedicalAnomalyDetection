@@ -83,7 +83,7 @@ async def list_images(
     total = query.count()
     items = (
         query
-        .order_by(ImageModel.uploaded_at.desc())
+        .order_by(ImageModel.uploaded_at.desc(), ImageModel.id.desc())
         .offset(offset)
         .limit(limit)
         .all()

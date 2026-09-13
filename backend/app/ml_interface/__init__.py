@@ -91,9 +91,10 @@ def _load_yolo():
     yolo_mod.model = YOLO(str(model_path))
     _YOLO_CLASS_NAMES = list(yolo_mod.model.names.values())
 
-    if len(_YOLO_CLASS_NAMES) != 15:
+    _EXPECTED = {14, 15}
+    if len(_YOLO_CLASS_NAMES) not in _EXPECTED:
         raise ValueError(
-            f"Expected 15 classes, got {len(_YOLO_CLASS_NAMES)}: {_YOLO_CLASS_NAMES}"
+            f"Expected 14 or 15 classes, got {len(_YOLO_CLASS_NAMES)}: {_YOLO_CLASS_NAMES}"
         )
 
     logger.info("YOLOv8m loaded: %d classes from %s", len(_YOLO_CLASS_NAMES), model_path)
