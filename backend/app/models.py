@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import enum
 from datetime import datetime, timezone
 
@@ -16,7 +18,37 @@ from sqlalchemy.orm import relationship
 from app.db import Base
 
 
+# ---------------------------------------------------------------------------
+# Unified 15-class taxonomy (both ResNet-50 and YOLOv8m).
+# Both models have been retrained to output the same 15 classes.
+#
+#   14 disease classes + Normal = 15 total
+#
+# Source: checkpoint["class_names"] (ResNet) / model.names (YOLO) at load time.
+# The server validates class counts at startup and fails if they don't match.
+# ---------------------------------------------------------------------------
+UNIFIED_CLASSES: list[str] = [
+    "Normal",
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
+    "Cardiomegaly",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
+    "Lung Opacity",
+    "Nodule/Mass",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
+    "Pulmonary fibrosis",
+]
+
+
 class FindingClass(str, enum.Enum):
+    """Unified classification label from both ResNet-50 and YOLOv8m (15 classes)."""
+
     NORMAL = "Normal"
     AORTIC_ENLARGEMENT = "Aortic enlargement"
     ATELECTASIS = "Atelectasis"
@@ -52,7 +84,7 @@ class Image(Base):
     __tablename__ = "images"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
     file_path = Column(String, nullable=False)
     original_filename = Column(String, nullable=False)
     content_type = Column(String, nullable=False)
@@ -70,9 +102,9 @@ class Prediction(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     image_id = Column(
-        Integer, ForeignKey("images.id", ondelete="CASCADE"), nullable=False
+        Integer, ForeignKey("images.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    predicted_class = Column(String, nullable=False)
+    predicted_class = Column(String, nullable=False, index=True)
     confidence = Column(Float, nullable=False)
     bboxes = Column(Text, nullable=False, default="[]")
     heatmap_path = Column(String, nullable=True)

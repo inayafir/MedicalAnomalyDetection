@@ -2,7 +2,7 @@ import io
 
 import pytest
 
-from app.models import FindingClass
+from app.models import UNIFIED_CLASSES, FindingClass
 
 
 class TestCreatePrediction:
@@ -24,6 +24,8 @@ class TestCreatePrediction:
         data = resp.json()
         assert "id" in data
         assert data["image_id"] == image_id
+        # Top-level class must be one of the 15 unified classes
+        assert data["predicted_class"] in UNIFIED_CLASSES
         assert data["predicted_class"] in [c.value for c in FindingClass]
         assert 0 <= data["confidence"] <= 1
         assert isinstance(data["bboxes"], list)
@@ -34,11 +36,14 @@ class TestCreatePrediction:
         image_id = self._upload_image(client)
         resp = client.post(f"/predictions/{image_id}")
         data = resp.json()
-        if data["predicted_class"] == FindingClass.NORMAL.value:
+        if data["predicted_class"] == "Normal":
             assert data["bboxes"] == []
         else:
             for bbox in data["bboxes"]:
-                assert "class" in bbox
+                assert "class_" in bbox or "class" in bbox
+                class_key = "class_" if "class_" in bbox else "class"
+                # Bbox class must be one of the 15 unified classes
+                assert bbox[class_key] in UNIFIED_CLASSES
                 assert "x1" in bbox and "y1" in bbox
                 assert "x2" in bbox and "y2" in bbox
                 assert "confidence" in bbox
@@ -85,22 +90,30 @@ class TestGetPrediction:
 class TestRealModelPrediction:
     """Tests that exercise the real ML models. Slow — skip with -m 'not integration'."""
 
+    def test_checkpoint_class_counts(self):
+        """Verify checkpoint class counts match expectations at import time."""
+        from app.models import UNIFIED_CLASSES
+        assert len(UNIFIED_CLASSES) == 15, f"Expected 15 unified classes, got {len(UNIFIED_CLASSES)}"
+
     def test_ml_interface_direct(self):
-        from app.ml_interface import predict, is_model_loaded
+        from app.ml_interface import predict, is_model_loaded, load_models, get_classifier_classes, get_detector_classes
+
+        # Ensure models are loaded (lifespan doesn't run in standalone tests)
+        if not is_model_loaded():
+            load_models()
+        assert is_model_loaded(), "Models should be loaded for integration test"
+
         # Create a temp image
         img_bytes = io.BytesIO()
         from PIL import Image
         Image.new("RGB", (200, 200), (100, 100, 100)).save(img_bytes, format="PNG")
         img_bytes.seek(0)
 
-        # Save to storage
         from app.storage import save_image
-        from fastapi import UploadFile
-        import io as _io
 
         class FakeUpload:
             def __init__(self, data, filename, content_type):
-                self.file = _io.BytesIO(data)
+                self.file = io.BytesIO(data)
                 self.filename = filename
                 self.content_type = content_type
 
@@ -108,9 +121,27 @@ class TestRealModelPrediction:
         rel_path = save_image(upload)
 
         result = predict(rel_path, 200, 200)
-        assert "class" in result
-        assert "confidence" in result
-        assert "bboxes" in result
-        assert "heatmap_path" in result
-        assert result["class"] in [c.value for c in FindingClass]
+
+        # Top-level class from unified 15-class taxonomy
+        unified_classes = get_classifier_classes()
+        assert result["class"] in unified_classes, (
+            f"Top-level class {result['class']!r} not in unified classes: {unified_classes}"
+        )
         assert 0 <= result["confidence"] <= 1
+
+        # Bbox classes from unified 15-class taxonomy
+        detector_classes = get_detector_classes()
+        for bbox in result["bboxes"]:
+            assert bbox["class"] in detector_classes, (
+                f"Bbox class {bbox['class']!r} not in unified classes: {detector_classes}"
+            )
+            assert 0 <= bbox["confidence"] <= 1
+            assert bbox["x1"] < bbox["x2"]
+            assert bbox["y1"] < bbox["y2"]
+            # Coordinates should be within original image bounds
+            assert 0 <= bbox["x1"] < 200
+            assert 0 <= bbox["y1"] < 200
+            assert bbox["x2"] <= 200
+            assert bbox["y2"] <= 200
+
+        assert "heatmap_path" in result

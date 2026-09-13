@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from PIL import Image
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
 from app.exceptions import NotFoundError
 from app.models import Image as ImageModel, Patient, Prediction
-from app.schemas import ImageDetail, ImageResponse, PredictionRecord
-from app.storage import save_image
+from app.schemas import ImageDetail, ImageListItem, ImageResponse, PaginatedResponse, PredictionRecord
+from app.storage import delete_file, save_image
 
 router = APIRouter(prefix="/images", tags=["images"])
 
@@ -51,7 +53,6 @@ async def upload_image(
         if not patient:
             raise NotFoundError(f"Patient with id {patient_id} not found")
 
-    # Save file
     file.file.seek(0)
     rel_path = save_image(file)
 
@@ -66,6 +67,45 @@ async def upload_image(
     db.commit()
     db.refresh(img_record)
     return img_record
+
+
+@router.get("", response_model=PaginatedResponse[ImageListItem])
+async def list_images(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    patient_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+):
+    query = db.query(ImageModel)
+    if patient_id is not None:
+        query = query.filter(ImageModel.patient_id == patient_id)
+
+    total = query.count()
+    items = (
+        query
+        .order_by(ImageModel.uploaded_at.desc(), ImageModel.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return PaginatedResponse(
+        items=[
+            ImageListItem(
+                id=img.id,
+                file_path=img.file_path,
+                original_filename=img.original_filename,
+                content_type=img.content_type,
+                file_size_bytes=img.file_size_bytes,
+                uploaded_at=img.uploaded_at,
+                patient_id=img.patient_id,
+            )
+            for img in items
+        ],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.get("/{image_id}", response_model=ImageDetail)
@@ -95,7 +135,28 @@ async def get_image(image_id: int, db: Session = Depends(get_db)):
 
     return ImageDetail(
         id=img.id,
+        file_path=img.file_path,
         original_filename=img.original_filename,
+        content_type=img.content_type,
+        file_size_bytes=img.file_size_bytes,
         uploaded_at=img.uploaded_at,
+        patient_id=img.patient_id,
         latest_prediction=latest_pred_schema,
     )
+
+
+@router.delete("/{image_id}", status_code=204)
+async def delete_image(image_id: int, db: Session = Depends(get_db)):
+    img = db.query(ImageModel).filter(ImageModel.id == image_id).first()
+    if not img:
+        raise NotFoundError(f"Image with id {image_id} not found")
+
+    # Delete underlying files (image + any heatmaps from predictions)
+    delete_file(img.file_path)
+    for pred in img.predictions:
+        if pred.heatmap_path:
+            delete_file(pred.heatmap_path)
+
+    db.delete(img)
+    db.commit()
+    return None

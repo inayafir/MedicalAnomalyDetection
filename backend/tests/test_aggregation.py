@@ -1,16 +1,16 @@
 import pytest
 
 from app.aggregation import build_prediction_record
-from app.models import FindingClass
+from app.models import UNIFIED_CLASSES
 
 
 class TestBuildPredictionRecord:
-    def test_valid_input(self):
+    def test_valid_input_with_classifier_class(self):
         raw = {
-            "class": FindingClass.CARDIOMEGALY.value,
+            "class": "Cardiomegaly",
             "confidence": 0.85,
             "bboxes": [
-                {"class": "Cardiomegaly", "x1": 10, "y1": 20, "x2": 100, "y2": 200, "confidence": 0.8}
+                {"class": "Aortic enlargement", "x1": 10, "y1": 20, "x2": 100, "y2": 200, "confidence": 0.8}
             ],
             "heatmap_path": "heatmaps/2026/08/25/test.png",
         }
@@ -23,7 +23,7 @@ class TestBuildPredictionRecord:
 
     def test_normal_class(self):
         raw = {
-            "class": FindingClass.NORMAL.value,
+            "class": "Normal",
             "confidence": 0.95,
             "bboxes": [],
             "heatmap_path": None,
@@ -33,20 +33,43 @@ class TestBuildPredictionRecord:
 
     def test_pulmonary_fibrosis(self):
         raw = {
-            "class": FindingClass.PULMONARY_FIBROSIS.value,
+            "class": "Pulmonary fibrosis",
             "confidence": 0.78,
             "bboxes": [
-                {"class": "Pulmonary fibrosis", "x1": 50, "y1": 60, "x2": 200, "y2": 300, "confidence": 0.75}
+                {"class": "Pleural thickening", "x1": 50, "y1": 60, "x2": 200, "y2": 300, "confidence": 0.75}
             ],
             "heatmap_path": None,
         }
         result = build_prediction_record(raw, image_id=3)
         assert result["predicted_class"] == "Pulmonary fibrosis"
 
+    def test_bbox_uses_detector_class_not_classifier_class(self):
+        """Bbox class can be any of the 15 unified classes."""
+        raw = {
+            "class": "Normal",
+            "confidence": 0.95,
+            "bboxes": [
+                {"class": "Atelectasis", "x1": 10, "y1": 20, "x2": 100, "y2": 200, "confidence": 0.8},
+                {"class": "Nodule/Mass", "x1": 50, "y1": 60, "x2": 150, "y2": 180, "confidence": 0.7},
+            ],
+            "heatmap_path": None,
+        }
+        result = build_prediction_record(raw, image_id=4)
+        import json
+        bboxes = json.loads(result["bboxes"])
+        assert bboxes[0]["class"] == "Atelectasis"
+        assert bboxes[1]["class"] == "Nodule/Mass"
+
     def test_invalid_class(self):
         raw = {"class": "InvalidClass", "confidence": 0.5, "bboxes": []}
         with pytest.raises(ValueError, match="Invalid class"):
             build_prediction_record(raw, image_id=1)
+
+    def test_unified_class_accepted_as_top_level(self):
+        """Any of the 15 classes can be used as top-level class."""
+        raw = {"class": "Atelectasis", "confidence": 0.5, "bboxes": []}
+        result = build_prediction_record(raw, image_id=1)
+        assert result["predicted_class"] == "Atelectasis"
 
     def test_confidence_out_of_range(self):
         raw = {"class": "Cardiomegaly", "confidence": 1.5, "bboxes": []}
@@ -57,7 +80,7 @@ class TestBuildPredictionRecord:
         raw = {
             "class": "Cardiomegaly",
             "confidence": 0.8,
-            "bboxes": [{"class": "Cardiomegaly", "x1": 10, "y1": 20, "x2": 100}],
+            "bboxes": [{"class": "Aortic enlargement", "x1": 10, "y1": 20, "x2": 100}],
         }
         with pytest.raises(ValueError, match="missing required key"):
             build_prediction_record(raw, image_id=1)

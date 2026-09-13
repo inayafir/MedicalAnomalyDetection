@@ -1,0 +1,540 @@
+# MedicalAnomalyDetection — Full Project Summary
+
+## Overview
+
+This project is a chest X-ray anomaly detection system with three team members:
+- **Person A**: ML core (ResNet-50 classifier + YOLOv8m detector + Grad-CAM)
+- **Person B**: Backend API + database layer (this work)
+- **Person C**: Frontend (out of scope)
+
+Person A pushed a repository of ML training/evaluation scripts to GitHub. Person B (me) built the entire REST API, database, storage, and integration layer that wraps those ML models into a production-ready service. The system uploads chest X-ray images, runs them through the ML pipeline, stores predictions, and exposes everything via a REST API.
+
+---
+
+## Part 1: What Already Existed (Person A's ML Repo)
+
+The repository at `https://github.com/inayafir/MedicalAnomalyDetection` was cloned and inspected before any backend code was written. It contained only ML training and evaluation scripts — no API, no database, no web framework of any kind.
+
+### Repository Structure
+
+```
+MedicalAnomalyDetection/
+  src/
+    classification/
+      train_resnet50.py            # ResNet-50 training loop
+      evaluate_resnet50.py         # Validation evaluation with metrics
+      diagnose_resnet50.py         # Diagnostic inference + confusion matrix
+      gradcam_resnet50.py          # Grad-CAM heatmap generation
+      prepare_classification_dataset.py  # CSV splitting for classification
+      prepare_resnet_dataset.py    # Dataset preparation for ResNet
+    detection/
+      train_yolov8.py              # YOLOv8m training
+      evaluate_yolov8.py           # YOLOv8 evaluation
+      predict.py                   # YOLOv8 inference (the detection entry point)
+      prepare_yolo_dataset.py      # YOLO dataset format conversion
+      clean_annotations.py         # Annotation cleaning
+      apply_wbf.py                 # Weighted Box Fusion
+    preprocessing/
+      augmentation.py              # Image augmentation
+      create_labels.py             # Label creation
+      prepare_yolo_dataset.py      # YOLO dataset prep (duplicate)
+      wbf_fusion.py                # WBF for raw annotations
+```
+
+### Two Separate Models Found
+
+After reading every source file, two distinct models were identified:
+
+**1. YOLOv8m Detection** (`src/detection/predict.py`)
+
+- Entry point: `predict_image(image_path, confidence=0.1)`
+- Returns: `{"model": "YOLOv8m", "detections": [...], "num_detections": N}`
+- Each detection contains: `{"class_id": int, "class": str, "confidence": float, "bbox": {"x1": float, "y1": float, "x2": float, "y2": float}}`
+- Bounding box coordinates are in original image pixel space (YOLO's `box.xyxy` returns pixel coordinates)
+- Model weights expected at: `runs/detect/outputs/detection/yolov8m_detection/weights/best.pt`
+- This is a 14-class detection model (all disease classes; Normal excluded because it has no bboxes)
+
+**2. ResNet-50 Classification + Grad-CAM** (`src/classification/gradcam_resnet50.py`)
+
+- Entry point: `generate_gradcam(image_path, output_path=None)`
+- Returns: `{"class": str, "confidence": float, "heatmap": str (file path)}`
+- 15-class classification: `["Normal", "Aortic enlargement", "Atelectasis", "Calcification", "Cardiomegaly", "Consolidation", "ILD", "Infiltration", "Lung Opacity", "Nodule/Mass", "Other lesion", "Pleural effusion", "Pleural thickening", "Pneumothorax", "Pulmonary fibrosis"]`
+- Grad-CAM is implemented manually (hook-based, targeting `model.layer4[-1].conv3`)
+- Model weights expected at: `outputs/classification/resnet50/best_model.pth`
+- Uses PyTorch's `torchvision.models.resnet50` with custom `fc` layer
+
+### Critical Finding: No Single predict() Function
+
+There is no unified `predict()` function in Person A's codebase. The classification and detection models are completely independent scripts. The backend needed to combine both outputs into a single prediction result.
+
+### Class Name Changes
+
+The original specification defined 5 classes:
+- `"No Finding"`, `"Cardiomegaly"`, `"Pleural Effusion"`, `"Lung Opacity"`, `"Aortic Enlargement"`
+
+Person A expanded to the full 15-class VinBigData taxonomy:
+- `Normal`, `Aortic enlargement`, `Atelectasis`, `Calcification`, `Cardiomegaly`, `Consolidation`, `ILD`, `Infiltration`, `Lung Opacity`, `Nodule/Mass`, `Other lesion`, `Pleural effusion`, `Pleural thickening`, `Pneumothorax`, `Pulmonary fibrosis`
+
+Key changes: `"No Finding"` → `"Normal"`, `"Aortic Enlargement"` exists as a separate class, `"Pulmonary fibrosis"` is a new addition, and 9 entirely new disease classes were added. The backend uses Person A's actual labels.
+
+### Missing Trained Weights
+
+The `.gitignore` excludes `*.pt` and `*.pth` files. No trained model checkpoints exist in the repository. The backend was designed with automatic fallback to a mock predictor when weights are not found, so the entire system remains functional for development and testing without real models.
+
+### Dependencies Found
+
+The ML scripts require: `torch`, `torchvision`, `ultralytics` (YOLOv8), `opencv-python`, `scikit-learn`, `pandas`, `numpy`, `Pillow`, `ensemble-boxes` (for WBF). These are separate from the backend's FastAPI/SQLAlchemy dependencies.
+
+---
+
+## Part 2: Backend Architecture
+
+### Target Folder Layout
+
+```
+backend/
+  ml_core/                # Placeholder for Person A's cloned repo
+  app/
+    __init__.py
+    main.py               # FastAPI app, startup event, exception handlers
+    config.py              # Settings via pydantic-settings
+    db.py                  # SQLAlchemy engine, session factory, get_db dependency
+    models.py              # ORM models: Patient, Image, Prediction, Report + FindingClass enum
+    schemas.py             # Pydantic v2 request/response models
+    storage.py             # File storage abstraction (images, heatmaps, reports)
+    ml_mock.py             # Mock prediction with weighted class distribution
+    ml_interface/          # ML integration package
+      __init__.py          # Main predict() logic, model loading, Grad-CAM generation
+      _yolo.py             # YOLO model singleton holder
+      _resnet.py           # ResNet-50 model singleton holder + device
+    aggregation.py         # Pure validation/transformation function
+    exceptions.py          # Custom exception classes + FastAPI handlers
+    routers/
+      __init__.py
+      health.py            # GET /health
+      images.py            # POST /images/upload, GET /images/{id}
+      predictions.py       # POST /predictions/{id}, GET /predictions/{id}
+      reports.py           # POST /reports/{id}
+  tests/
+    __init__.py
+    conftest.py            # Fixtures: in-memory SQLite, TestClient, sample images
+    test_images.py         # 8 tests: upload validation, content-type, size, corruption
+    test_predictions.py    # 7 tests: contract shape, bbox structure, multiple predictions
+    test_reports.py        # 2 tests: report creation, 404
+    test_aggregation.py    # 8 tests: valid input, invalid class, bad confidence, missing keys
+    test_db_constraints.py # 2 tests: cascade delete, FK enforcement
+  storage/                 # Runtime data directory (gitignored)
+  .env.example
+  .gitignore
+  Makefile
+  pyproject.toml           # pytest configuration with integration markers
+  requirements.txt
+  README.md
+```
+
+---
+
+## Part 3: File-by-File Breakdown
+
+### `app/config.py`
+
+Uses `pydantic-settings` to load configuration from environment variables and `.env` files. Settings class includes:
+- `DATABASE_URL` (default: `sqlite:///./storage/dev.db`)
+- `STORAGE_ROOT` (default: `./storage`)
+- `MAX_UPLOAD_SIZE_MB` (default: `10`)
+- `ALLOWED_CONTENT_TYPES` (default: `image/png,image/jpeg`)
+- `ML_DEVICE` (default: `cpu`) — for PyTorch device selection
+
+Provides computed properties: `allowed_content_types_list` (splits comma-separated string) and `max_upload_size_bytes` (converts MB to bytes).
+
+### `app/db.py`
+
+Creates the SQLAlchemy engine and session factory. Uses `DeclarativeBase` (SQLAlchemy 2.x style). The `get_db()` generator yields a session and ensures it's closed after each request. SQLite-specific `check_same_thread=False` is applied conditionally.
+
+### `app/models.py`
+
+Defines the `FindingClass` enum with all 15 VinBigData class labels:
+- `NORMAL = "Normal"`
+- `AORTIC_ENLARGEMENT = "Aortic enlargement"`
+- `ATELECTASIS = "Atelectasis"`
+- `CALCIFICATION = "Calcification"`
+- `CARDIOMEGALY = "Cardiomegaly"`
+- `CONSOLIDATION = "Consolidation"`
+- `ILD = "ILD"`
+- `INFILTRATION = "Infiltration"`
+- `LUNG_OPACITY = "Lung Opacity"`
+- `NODULE_MASS = "Nodule/Mass"`
+- `OTHER_LESION = "Other lesion"`
+- `PLEURAL_EFFUSION = "Pleural effusion"`
+- `PLEURAL_THICKENING = "Pleural thickening"`
+- `PNEUMOTHORAX = "Pneumothorax"`
+- `PULMONARY_FIBROSIS = "Pulmonary fibrosis"`
+
+Four ORM models:
+- **Patient**: `id`, `display_name` (nullable), `created_at`
+- **Image**: `id`, `patient_id` (FK, nullable), `file_path`, `original_filename`, `content_type`, `file_size_bytes`, `uploaded_at`. Has `cascade="all, delete-orphan"` on the `predictions` relationship.
+- **Prediction**: `id`, `image_id` (FK with `ON DELETE CASCADE`), `predicted_class`, `confidence`, `bboxes` (JSON stored as Text), `heatmap_path` (nullable), `created_at` (indexed). Has `cascade="all, delete-orphan"` on the `reports` relationship.
+- **Report**: `id`, `prediction_id` (FK with `ON DELETE CASCADE`), `pdf_path` (nullable), `generated_at`.
+
+### `app/schemas.py`
+
+Pydantic v2 models using `ConfigDict(from_attributes=True)` for ORM compatibility:
+- `ImageResponse` — returned after upload
+- `ImageDetail` — includes `latest_prediction` (nullable `PredictionRecord`)
+- `PredictionRecord` — full prediction with `bboxes` as `list[dict]`
+- `ReportResponse` — report metadata
+- `HealthResponse` — `{"status": str}`
+- `BBox` — individual bounding box schema (used for validation)
+
+### `app/storage.py`
+
+File storage abstraction with four functions:
+- `save_image(file: UploadFile) -> str` — saves under `storage/images/<yyyy>/<mm>/<dd>/<uuid4>.<ext>`, returns relative path
+- `save_heatmap(image_bytes: bytes) -> str` — saves under `storage/heatmaps/<yyyy>/<mm>/<dd>/<uuid4>.png`, returns relative path
+- `save_report(pdf_bytes: bytes, prediction_id: int) -> str` — saves under `storage/reports/<prediction_id>/<uuid4>.pdf`
+- `get_file(relative_path: str) -> bytes` — reads file back, raises `FileNotFoundError` if missing
+
+Only relative paths are stored in the database. UUID filenames prevent collisions and avoid leaking original filenames into storage.
+
+### `app/ml_mock.py`
+
+Mock prediction function that generates realistic-looking output:
+- Uses weighted random selection across all 15 classes (Normal ~30%, diseases distributed by frequency)
+- Takes `image_path`, `original_width`, `original_height` as parameters
+- Generates 1-3 bounding boxes for abnormal classes (empty list for Normal)
+- Bbox coordinates stay within actual image dimensions
+- Generates a placeholder heatmap PNG via Pillow (solid random color)
+- Returns the normalized contract shape
+
+### `app/ml_interface/__init__.py`
+
+The core integration layer. This is the only file that imports from Person A's code. It contains:
+
+**Model loading** (`load_models()`): Called once at FastAPI startup. Attempts to load YOLOv8m and ResNet-50 weights from the expected paths. If weights aren't found or libraries aren't installed, it prints a warning and continues — the system falls back to mock automatically.
+
+**Prediction** (`predict(image_path, original_width, original_height)`): First tries the real models via `_predict_real()`. If that returns `None` (models not loaded), falls back to `mock_predict()`.
+
+**Real prediction pipeline** (`_predict_real()`):
+1. Runs ResNet-50 classification via `_predict_resnet()` — gets the overall finding class and confidence
+2. Runs YOLOv8 detection via `_predict_yolo()` — gets bounding boxes
+3. Normalizes YOLO detections to the contract format (flat bbox dict with class, x1, y1, x2, y2, confidence)
+4. Generates Grad-CAM heatmap via `_generate_gradcam()` — hooks the last conv layer, computes CAM, overlays on original image, saves via `storage.save_heatmap()`
+
+**Grad-CAM implementation** (`_generate_gradcam()`): A from-scratch implementation that:
+- Registers forward and backward hooks on `model.layer4[-1].conv3`
+- Runs forward pass, computes gradient of the target class score
+- Computes weighted combination of activations
+- Applies ReLU, normalizes to [0, 1]
+- Resizes to original image dimensions
+- Overlays heatmap on original image using OpenCV's `addWeighted`
+- Encodes as PNG and saves via storage
+
+### `app/ml_interface/_yolo.py` and `app/ml_interface/_resnet.py`
+
+Simple singleton holder modules. `_yolo.py` holds `model = None`. `_resnet.py` holds `model = None` and `device = torch.device("cpu")`. These are populated at startup by `load_models()`.
+
+### `app/aggregation.py`
+
+Pure function `build_prediction_record(normalized_ml_output, image_id) -> dict`:
+- Validates that input is a dict
+- Checks `class` is a valid `FindingClass` value
+- Checks `confidence` is a float in [0, 1]
+- Checks `bboxes` is a list
+- Validates each bbox has required keys: `class`, `x1`, `y1`, `x2`, `y2`, `confidence`
+- Returns a dict ready for DB persistence with `bboxes` serialized as JSON string
+
+This function is independently unit-testable with no FastAPI or DB dependencies.
+
+### `app/exceptions.py`
+
+Two custom exception classes:
+- `NotFoundError` — mapped to HTTP 404
+- `AggregationError` — mapped to HTTP 422
+
+Both are registered as FastAPI exception handlers that return clean JSON: `{"detail": "human readable message"}`.
+
+### `app/routers/health.py`
+
+`GET /health` — returns `{"status": "ok", "model_loaded": true/false}`. Reports whether the ML models loaded successfully at startup. No DB dependency — responds even if the database is down.
+
+### `app/routers/images.py`
+
+`POST /images/upload`:
+- Accepts multipart form with `file` (required) and `patient_id` (optional query param)
+- Validation chain (each returns distinct HTTP status):
+  1. Content-Type not in allowed list → 415
+  2. File size exceeds max → 413
+  3. Pillow can't verify the image → 422
+  4. patient_id given but doesn't exist → 404
+- Saves file via `storage.save_image()`, inserts `images` row, returns 201
+
+`GET /images/{image_id}`:
+- Returns 404 if not found
+- Returns image metadata plus `latest_prediction` (the most recent `Prediction` row, or null)
+
+### `app/routers/predictions.py`
+
+`POST /predictions/{image_id}`:
+- Returns 404 if image doesn't exist
+- Opens the image to get actual width/height dimensions
+- Calls `ml_interface.predict(file_path, width, height)`
+- Pipes result through `aggregation.build_prediction_record()`
+- Persists a new `predictions` row (creates history, doesn't overwrite)
+- Returns 201 with the full prediction record
+
+`GET /predictions/{prediction_id}`:
+- Returns 404 if not found, 200 with full record otherwise
+
+### `app/routers/reports.py`
+
+`POST /reports/{prediction_id}`:
+- Returns 404 if prediction doesn't exist
+- Creates a `reports` row with `pdf_path = null` (PDF generation is out of scope)
+- Returns 201 with the report record
+
+### `app/main.py`
+
+Creates the FastAPI app instance, registers exception handlers, includes all routers, and on startup:
+1. Creates all database tables
+2. Calls `ml_interface.load_models()` to load ML weights once
+
+---
+
+## Part 4: Tests
+
+### Test Infrastructure (`conftest.py`)
+
+- Uses in-memory SQLite (`sqlite://`) for test isolation — no file locking issues on Windows
+- Session-scoped engine with `create_all` once, `drop_all` at teardown
+- Each test gets a fresh transaction that rolls back after the test
+- `client` fixture overrides `get_db` dependency to use the test session
+- `sample_image_bytes` fixture creates a real 128x128 PNG via Pillow
+- `sample_image_upload` fixture wraps the bytes for upload tests
+
+### Test Coverage (27 tests total)
+
+**test_aggregation.py (8 tests)**:
+- Valid input produces correct dict
+- `Normal` class works
+- `Pulmonary fibrosis` class works
+- Invalid class name raises ValueError
+- Confidence > 1 raises ValueError
+- Confidence < 0 raises ValueError
+- Bbox missing required key raises ValueError
+- Non-dict input raises ValueError
+- Non-list bboxes raises ValueError
+
+**test_db_constraints.py (2 tests)**:
+- Deleting an Image cascades to delete its Predictions and their Reports
+- Foreign key on nonexistent patient_id is handled (SQLite doesn't enforce by default, test covers both cases)
+
+**test_images.py (8 tests)**:
+- Successful upload returns 201 with correct fields
+- Upload with nonexistent patient_id returns 404
+- Wrong content-type returns 415
+- Oversized file returns 413
+- Corrupted image bytes return 422
+- GET nonexistent image returns 404
+- GET image with no predictions returns `latest_prediction: null`
+
+**test_predictions.py (7 tests, 1 integration)**:
+- Prediction created with correct contract shape
+- Bbox structure validated (x2 > x1, y2 > y1, all keys present)
+- Calling twice creates two separate rows (history preserved)
+- 404 for nonexistent image
+- GET prediction returns correct record
+- GET nonexistent prediction returns 404
+- Integration test: calls `ml_interface.predict()` directly, verifies contract shape
+
+**test_reports.py (2 tests)**:
+- Report created for existing prediction
+- 404 for nonexistent prediction
+
+### Running Tests
+
+```bash
+pytest -v                    # all 27 tests
+pytest -m "not integration"  # 26 fast tests (skips real model call)
+pytest -m "integration"      # 1 integration test (calls predict directly)
+```
+
+---
+
+## Part 5: Configuration & Environment
+
+### `.env.example`
+
+```
+DATABASE_URL=sqlite:///./storage/dev.db
+STORAGE_ROOT=./storage
+MAX_UPLOAD_SIZE_MB=10
+ALLOWED_CONTENT_TYPES=image/png,image/jpeg
+ML_DEVICE=cpu
+```
+
+### `Makefile`
+
+- `make run` — starts uvicorn with reload on port 8000
+- `make test` — runs pytest
+- `make init-db` — creates database tables
+- `make install` — pip install requirements
+
+### `requirements.txt`
+
+```
+fastapi>=0.100,<1.0
+uvicorn[standard]>=0.23,<1.0
+sqlalchemy>=2.0,<3.0
+pydantic>=2.0,<3.0
+pydantic-settings>=2.0,<3.0
+python-multipart>=0.0.5
+pillow>=9.0,<12.0
+eval_type_backport>=0.2
+pytest>=7.0,<9.0
+httpx>=0.24,<1.0
+```
+
+`eval_type_backport` is required because the environment runs Python 3.8 (the spec requested 3.11+), and `pydantic-settings` with `from __future__ import annotations` uses `str | None` syntax that needs backporting.
+
+### `pyproject.toml`
+
+Configures pytest with custom markers:
+```toml
+[tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (slow, requires real models)",
+]
+```
+
+---
+
+## Part 6: Prediction JSON Contract
+
+The contract that the API exposes (and the mock produces):
+
+```json
+{
+  "class": "Cardiomegaly",
+  "confidence": 0.91,
+  "bboxes": [
+    {
+      "class": "Cardiomegaly",
+      "x1": 120,
+      "y1": 80,
+      "x2": 340,
+      "y2": 260,
+      "confidence": 0.87
+    }
+  ],
+  "heatmap_path": "heatmaps/2026/08/25/3f2a1c.png"
+}
+```
+
+- `class`: One of the 15 VinBigData classes (Normal, Aortic enlargement, Atelectasis, Calcification, Cardiomegaly, Consolidation, ILD, Infiltration, Lung Opacity, Nodule/Mass, Other lesion, Pleural effusion, Pleural thickening, Pneumothorax, Pulmonary fibrosis)
+- `confidence`: Float between 0 and 1
+- `bboxes`: List of bounding boxes (empty when class is `Normal`). Each has `class`, `x1`, `y1`, `x2`, `y2` (integer pixel coordinates), `confidence`
+- `heatmap_path`: Relative path under `STORAGE_ROOT` where the Grad-CAM heatmap PNG is stored
+
+---
+
+## Part 7: Integration Design
+
+### How Person A's Models Are Wired In
+
+`ml_interface/__init__.py` is the single integration point. Nothing else in `app/` imports from `ml_core` or knows about YOLO/ResNet internals.
+
+The `load_models()` function attempts:
+1. Import `ultralytics.YOLO` and load weights from `ml_core/runs/detect/outputs/detection/yolov8m_detection/weights/best.pt`
+2. Import `torch`, build `resnet50` with 15-class output, load weights from `ml_core/outputs/classification/resnet50/best_model.pth`
+
+If either fails (weights not found, library not installed), the system continues with mock. The `is_model_loaded()` function reports the status, exposed via the `/health` endpoint.
+
+### Grad-CAM Implementation
+
+Rather than relying on Person A's `gradcam_resnet50.py` (which has hardcoded paths and creates files on disk), the backend reimplements Grad-CAM inline in `_generate_gradcam()`:
+- Hooks `model.layer4[-1].conv3` (same target layer as Person A's code)
+- Computes class activation map using the standardGrad-CAM algorithm
+- Overlays on original image using OpenCV
+- Saves via `storage.save_heatmap()` (returns relative path)
+
+This keeps the integration self-contained and avoids importing Person A's script-level code.
+
+### Coordinate Space Handling
+
+YOLOv8m's `box.xyxy` returns coordinates in the original image pixel space (not the model's input space). This was verified by reading the ultralytics source — the coordinates are automatically rescaled back to original dimensions. No manual rescaling is needed in the backend.
+
+### Model Loading Strategy
+
+Models are loaded once at FastAPI startup (via `@app.on_event("startup")`), not per-request. PyTorch model inference is expensive (seconds, not milliseconds), and loading weights takes several seconds. The loaded models are stored as module-level singletons in `_yolo.py` and `_resnet.py`.
+
+---
+
+## Part 8: API Endpoints
+
+| Method | Path | Status Codes | Description |
+|---|---|---|---|
+| `POST` | `/images/upload` | 201, 404, 413, 415, 422 | Upload chest X-ray image |
+| `GET` | `/images/{id}` | 200, 404 | Get image metadata + latest prediction |
+| `POST` | `/predictions/{image_id}` | 201, 404 | Run ML prediction on image |
+| `GET` | `/predictions/{id}` | 200, 404 | Get prediction record |
+| `POST` | `/reports/{prediction_id}` | 201, 404 | Create report (placeholder) |
+| `GET` | `/health` | 200 | Health check + model status |
+
+All error responses follow the shape `{"detail": "human readable message"}`.
+
+---
+
+## Part 9: Database Behavior
+
+### Cascade Delete Chain
+
+```
+Image (deleted)
+  → Prediction (cascade delete)
+    → Report (cascade delete)
+```
+
+This is enforced at the ORM level with `cascade="all, delete-orphan"` and at the database level with `ON DELETE CASCADE` on foreign keys. Tested in `test_db_constraints.py`.
+
+### Indexes
+
+- `predictions.image_id` — fast lookup of all predictions for an image
+- `predictions.created_at` — chronological ordering
+- `predictions.predicted_class` — filtering by finding type
+
+---
+
+## Part 10: Known Gaps and Limitations
+
+1. **No trained weights** — The `.pt` and `.pth` files are mock placeholders. The backend runs on `ml_mock.py` fallback until Person A completes training and shares the real checkpoints.
+
+2. **No authentication/authorization** — The API is open. Anyone can upload images and run predictions. This is documented as a known gap.
+
+3. **No PDF generation** — The `/reports` endpoint creates a DB row with `pdf_path = null`. PDF rendering is out of scope (Person C's area).
+
+4. **No frontend/UI** — Pure REST API only.
+
+5. **No deployment/CI** — Designed for local development only. No Docker, no GitHub Actions, no cloud config.
+
+6. **Python 3.8 compatibility** — The spec requested 3.11+, but the environment has 3.8. All code uses `from __future__ import annotations` and `eval_type_backport` for compatibility.
+
+7. **SQLite limitations** — Uses SQLite for simplicity. Foreign key enforcement is not enabled by default in SQLite (the cascade delete test handles this gracefully). For production, a PostgreSQL or MySQL database would be needed.
+
+8. **No image resizing** — Uploaded images are stored at their original size. Large medical images (often 2000x2000+) could consume significant storage.
+
+9. **Grad-CAM reimplementation** — The backend reimplements Grad-CAM rather than importing Person A's code, because their script has hardcoded paths and side effects (writes files to disk). This means two Grad-CAM implementations exist in the project.
+
+10. **Single-class prediction** — The system returns one overall classification per image. If an image has multiple findings, the classifier picks the most probable one. YOLO can detect multiple bounding boxes, but they all share the classifier's single class label.
+
+---
+
+## Part 11: What Person C Needs to Know
+
+- **API docs**: `http://localhost:8000/docs` (Swagger UI)
+- **Prediction latency**: ~2-5 seconds on CPU (real model), <50ms (mock)
+- **Health check**: `GET /health` returns `{"status": "ok", "model_loaded": true/false}`
+- **Error handling**: All errors return `{"detail": "message"}` — check this field
+- **Image upload**: Multipart form with `file` field, optional `patient_id` query param
+- **Prediction flow**: Upload image → get `id` → `POST /predictions/{id}` → wait → get result
+- **Bbox coordinates**: Integer pixels in original image space
+- **Class names**: All 15 VinBigData classes (Normal, Aortic enlargement, Atelectasis, Calcification, Cardiomegaly, Consolidation, ILD, Infiltration, Lung Opacity, Nodule/Mass, Other lesion, Pleural effusion, Pleural thickening, Pneumothorax, Pulmonary fibrosis)
