@@ -1,3 +1,4 @@
+
 from pathlib import Path
 import json
 
@@ -16,33 +17,36 @@ from ultralytics import YOLO
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+
 # ------------------------------------------------------------
 # ResNet-50 model
+# Final 15-class multi-label classification model
 # ------------------------------------------------------------
 
 RESNET_MODEL_PATH = (
     PROJECT_ROOT
-    / "outputs"
-    / "classification"
+    / "models"
     / "resnet50"
     / "best_model.pth"
 )
 
+
 # ------------------------------------------------------------
 # YOLOv8m model
+# Final 14-class detection model
 # ------------------------------------------------------------
 
 YOLO_MODEL_PATH = (
     PROJECT_ROOT
-    / "outputs"
-    / "detection"
-    / "yolov8m_detection-6"
-    / "weights"
+    / "models"
+    / "yolov8"
     / "best.pt"
 )
 
+
 # ------------------------------------------------------------
 # Grad-CAM output
+# Generated files remain inside outputs/
 # ------------------------------------------------------------
 
 GRADCAM_OUTPUT_DIR = (
@@ -62,17 +66,37 @@ GRADCAM_OUTPUT_DIR.mkdir(
 # CONFIGURATION
 # ============================================================
 
-NUM_CLASSES = 5
+# ResNet-50 has 15 classes.
+# YOLOv8m has 14 abnormality classes and does not contain
+# Normal because Normal images do not have bounding boxes.
+
+NUM_CLASSES = 15
 
 CLASS_NAMES = [
-    "Normal",
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
     "Cardiomegaly",
-    "Pleural effusion",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
     "Lung Opacity",
+    "Nodule/Mass",
+    "Normal",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
     "Pulmonary fibrosis",
 ]
 
 IMAGE_SIZE = 224
+
+# Threshold for ResNet multi-label classification.
+CLASSIFICATION_THRESHOLD = 0.50
+
+# YOLO confidence threshold.
+YOLO_CONFIDENCE_THRESHOLD = 0.10
 
 DEVICE = torch.device(
     "cuda"
@@ -197,7 +221,7 @@ def load_yolo():
 
 
 # ============================================================
-# RESNET-50 PREDICTION
+# RESNET-50 MULTI-LABEL PREDICTION
 # ============================================================
 
 def predict_resnet(
@@ -223,28 +247,57 @@ def predict_resnet(
             input_tensor
         )
 
-        probabilities = torch.softmax(
-            outputs,
-            dim=1
-        )
+        # Multi-label classification:
+        # each class has an independent probability.
+        probabilities = torch.sigmoid(
+            outputs
+        )[0]
 
-        predicted_class_id = int(
-            torch.argmax(
-                probabilities,
-                dim=1
-            ).item()
-        )
+    classifications = []
+
+    for class_id, probability in enumerate(
+        probabilities
+    ):
 
         confidence = float(
-            probabilities[
-                0,
-                predicted_class_id
-            ].item()
+            probability.item()
         )
+
+        if confidence >= CLASSIFICATION_THRESHOLD:
+
+            classifications.append(
+                {
+                    "class_id": class_id,
+
+                    "class": CLASS_NAMES[
+                        class_id
+                    ],
+
+                    "confidence": round(
+                        confidence,
+                        4
+                    )
+                }
+            )
+
+    # Primary prediction:
+    # class with the highest probability.
+    predicted_class_id = int(
+        torch.argmax(
+            probabilities
+        ).item()
+    )
+
+    primary_confidence = float(
+        probabilities[
+            predicted_class_id
+        ].item()
+    )
 
     return (
         predicted_class_id,
-        confidence
+        primary_confidence,
+        classifications
     )
 
 
@@ -259,7 +312,7 @@ def predict_yolo(
 
     results = model(
         str(image_path),
-        conf=0.10,
+        conf=YOLO_CONFIDENCE_THRESHOLD,
         verbose=False
     )
 
@@ -316,7 +369,7 @@ def predict_yolo(
                         "y2": round(
                             y2,
                             2
-                        ),
+                        )
                     }
                 }
             )
@@ -459,6 +512,7 @@ def create_gradcam(
         DEVICE
     )
 
+    # Last convolutional layer of ResNet-50.
     target_layer = (
         model.layer4[-1].conv3
     )
@@ -546,20 +600,24 @@ def predict(
             f"{image_path}"
         )
 
+
     # --------------------------------------------------------
-    # ResNet classification
+    # ResNet multi-label classification
     # --------------------------------------------------------
 
-    class_id, confidence = (
-        predict_resnet(
-            resnet_model,
-            image_path
-        )
+    (
+        class_id,
+        confidence,
+        classifications
+    ) = predict_resnet(
+        resnet_model,
+        image_path
     )
 
     predicted_class = CLASS_NAMES[
         class_id
     ]
+
 
     # --------------------------------------------------------
     # YOLO detection
@@ -569,6 +627,7 @@ def predict(
         yolo_model,
         image_path
     )
+
 
     # --------------------------------------------------------
     # Grad-CAM
@@ -580,6 +639,7 @@ def predict(
         class_id
     )
 
+
     # --------------------------------------------------------
     # Final result
     # --------------------------------------------------------
@@ -589,6 +649,7 @@ def predict(
             image_path
         ),
 
+        # Primary prediction
         "class": predicted_class,
 
         "confidence": round(
@@ -596,12 +657,17 @@ def predict(
             4
         ),
 
+        # All ResNet classes above threshold
+        "classifications": classifications,
+
+        # YOLO bounding boxes
         "bboxes": detections,
 
         "num_detections": len(
             detections
         ),
 
+        # Grad-CAM heatmap
         "heatmap": str(
             heatmap_path
         )
@@ -624,6 +690,24 @@ def main():
 
     print(
         f"Device : {DEVICE}"
+    )
+
+    print()
+
+    # --------------------------------------------------------
+    # Display model paths
+    # --------------------------------------------------------
+
+    print(
+        f"ResNet-50 model:\n"
+        f"{RESNET_MODEL_PATH}"
+    )
+
+    print()
+
+    print(
+        f"YOLOv8m model:\n"
+        f"{YOLO_MODEL_PATH}"
     )
 
     print()
@@ -659,6 +743,8 @@ def main():
         f"Test image:\n"
         f"{image_path.resolve()}"
     )
+
+    print()
 
     # --------------------------------------------------------
     # Load models

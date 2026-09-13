@@ -13,9 +13,16 @@ data/raw/
 data/processed/
 
 # Model weights (root-level duplicates only)
-# NOTE: backend/ml_core/checkpoints/*.pt and *.pth are tracked via Git LFS
 /*.pt
 /*.pth
+
+# Final trained models - tracked with Git LFS
+!models/
+!models/resnet50/
+!models/resnet50/best_model.pth
+!models/yolov8/
+!models/yolov8/best.pt
+
 *.onnx
 
 # Training outputs
