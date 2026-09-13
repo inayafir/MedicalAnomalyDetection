@@ -47,9 +47,9 @@ Both the ResNet-50 classifier and YOLOv8m detector have been retrained on the sa
 
 Produces a single **whole-image label**. This is the top-level `predicted_class` field.
 
-### Detection (YOLOv8m, 15 classes)
+### Detection (YOLOv8m, 14 abnormality classes)
 
-Produces **per-region bounding boxes**, each with its own label. These are the `bboxes[].class` fields. The YOLO model can also output "Normal" for regions it considers healthy.
+Produces **per-region bounding boxes**, each with its own label. These are the `bboxes[].class` fields. The YOLO model has no "Normal" class — if nothing is detected, the bboxes list is empty.
 
 ### Classes
 
