@@ -7,19 +7,19 @@ from pathlib import Path
 from PIL import Image
 
 from app.config import settings
+from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES
 from app.storage import save_heatmap
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Two models, unified 15-class taxonomy:
+# Two models, two label sets:
 #
 #   ResNet-50 classifier → top-level `class` / `confidence` (15 classes)
-#   YOLOv8m detector      → per-bbox `class` / `confidence` (15 classes)
+#   YOLOv8m detector      → per-bbox `class` / `confidence` (14 classes)
 #
-# Both models have been retrained on the same 15-class VinBigData taxonomy:
-# 14 disease classes + Normal. The classifier gives a single whole-image label;
-# the detector gives per-region boxes with their own labels.
+# The 14 detector classes are the VinBigData abnormality findings.
+# The 15 classifier classes are those same 14 findings plus "Normal".
 # ---------------------------------------------------------------------------
 
 _MODEL_LOADED = False
@@ -69,13 +69,12 @@ def _warm_up():
 
 
 def _load_yolo():
-    """Load YOLOv8 detector. Raises if checkpoint not found."""
+    """Load YOLOv8 detector. Raises if checkpoint not found or class count is wrong."""
     global _YOLO_CLASS_NAMES
     from ultralytics import YOLO
 
     model_path = Path(settings.YOLO_CHECKPOINT)
     if not model_path.is_absolute():
-        # Resolve relative to backend/ root (two levels up from ml_interface/)
         model_path = Path(__file__).resolve().parents[2] / model_path
 
     if not model_path.exists():
@@ -91,17 +90,16 @@ def _load_yolo():
     yolo_mod.model = YOLO(str(model_path))
     _YOLO_CLASS_NAMES = list(yolo_mod.model.names.values())
 
-    _EXPECTED = {14, 15}
-    if len(_YOLO_CLASS_NAMES) not in _EXPECTED:
+    if len(_YOLO_CLASS_NAMES) != len(DETECTOR_CLASSES):
         raise ValueError(
-            f"Expected 14 or 15 classes, got {len(_YOLO_CLASS_NAMES)}: {_YOLO_CLASS_NAMES}"
+            f"Expected {len(DETECTOR_CLASSES)} detector classes, got {len(_YOLO_CLASS_NAMES)}: {_YOLO_CLASS_NAMES}"
         )
 
     logger.info("YOLOv8m loaded: %d classes from %s", len(_YOLO_CLASS_NAMES), model_path)
 
 
 def _load_resnet():
-    """Load ResNet-50 classifier. Raises if checkpoint not found or malformed."""
+    """Load ResNet-50 classifier. Raises if checkpoint not found or class count is wrong."""
     global _RESNET_CLASS_NAMES
     import torch
     import torch.nn as nn
@@ -109,7 +107,6 @@ def _load_resnet():
 
     model_path = Path(settings.RESNET_CHECKPOINT)
     if not model_path.is_absolute():
-        # Resolve relative to backend/ root (two levels up from ml_interface/)
         model_path = Path(__file__).resolve().parents[2] / model_path
 
     if not model_path.exists():
@@ -123,7 +120,6 @@ def _load_resnet():
     device = torch.device(settings.ML_DEVICE)
     checkpoint = torch.load(str(model_path), map_location=device, weights_only=False)
 
-    # Read class names from checkpoint
     if isinstance(checkpoint, dict) and "class_names" in checkpoint:
         _RESNET_CLASS_NAMES = list(checkpoint["class_names"])
     else:
@@ -131,9 +127,9 @@ def _load_resnet():
             "ResNet checkpoint missing 'class_names' key — cannot determine class order"
         )
 
-    if len(_RESNET_CLASS_NAMES) != 15:
+    if len(_RESNET_CLASS_NAMES) != len(CLASSIFIER_CLASSES):
         raise ValueError(
-            f"Expected 15 classes, got {len(_RESNET_CLASS_NAMES)}: {_RESNET_CLASS_NAMES}"
+            f"Expected {len(CLASSIFIER_CLASSES)} classifier classes, got {len(_RESNET_CLASS_NAMES)}: {_RESNET_CLASS_NAMES}"
         )
 
     num_classes = len(_RESNET_CLASS_NAMES)
@@ -165,7 +161,7 @@ def get_classifier_classes() -> list[str]:
 
 
 def get_detector_classes() -> list[str]:
-    """Return the 15 class names from the YOLO checkpoint."""
+    """Return the 14 class names from the YOLO checkpoint."""
     return list(_YOLO_CLASS_NAMES)
 
 
@@ -180,13 +176,9 @@ def predict(image_path: str, original_width: int, original_height: int) -> dict:
 
     abs_path = os.path.join(settings.STORAGE_ROOT, image_path)
 
-    # --- Classification (ResNet-50) → top-level class ---
     classification_result = _predict_resnet(abs_path)
-
-    # --- Detection (YOLO) → per-bbox classes ---
     detections = _predict_yolo(abs_path, original_width, original_height)
 
-    # --- Normalize bboxes ---
     bboxes = []
     for det in detections:
         bbox = det.get("bbox", {})
@@ -199,7 +191,6 @@ def predict(image_path: str, original_width: int, original_height: int) -> dict:
             "confidence": det.get("confidence", 0.0),
         })
 
-    # --- Grad-CAM heatmap ---
     heatmap_path = _generate_gradcam(abs_path, classification_result["class_id"])
 
     return {
@@ -250,8 +241,6 @@ def _predict_yolo(abs_path: str, original_width: int, original_height: int) -> l
     if yolo_mod.model is None:
         raise RuntimeError("YOLO model not loaded")
 
-    # Ultralytics returns boxes in the input image's coordinate space.
-    # When we pass the original file, boxes are in original pixel coords.
     results = yolo_mod.model(abs_path, conf=0.1, verbose=False)
     detections = []
     for result in results:

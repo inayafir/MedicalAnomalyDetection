@@ -6,18 +6,18 @@ import random
 from PIL import Image
 
 from app.config import settings
-from app.models import UNIFIED_CLASSES
+from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES
 from app.storage import save_heatmap
 
 
 def mock_predict(image_path: str, original_width: int, original_height: int) -> dict:
-    chosen_class = random.choice(UNIFIED_CLASSES)
+    chosen_class = random.choice(CLASSIFIER_CLASSES)
 
     bboxes = []
     if chosen_class != "Normal":
         num_bboxes = random.randint(1, 3)
         for _ in range(num_bboxes):
-            bbox_class = random.choice(UNIFIED_CLASSES)
+            bbox_class = random.choice(DETECTOR_CLASSES)
             bx1 = random.randint(0, original_width // 2)
             by1 = random.randint(0, original_height // 2)
             bx2 = random.randint(bx1 + 10, min(bx1 + 200, original_width))

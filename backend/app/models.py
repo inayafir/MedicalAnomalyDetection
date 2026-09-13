@@ -19,16 +19,39 @@ from app.db import Base
 
 
 # ---------------------------------------------------------------------------
-# Unified 15-class taxonomy (both ResNet-50 and YOLOv8m).
-# Both models have been retrained to output the same 15 classes.
+# Two separate label sets — ResNet-50 classifier (15) and YOLOv8 detector (14).
 #
-#   14 disease classes + Normal = 15 total
+# The 14 detector classes are the 14 VinBigData abnormality findings.
+# The 15 classifier classes are those same 14 findings plus "Normal" (i.e.
+# "no finding detected" as a whole-image label).
 #
-# Source: checkpoint["class_names"] (ResNet) / model.names (YOLO) at load time.
-# The server validates class counts at startup and fails if they don't match.
+# The two models serve different purposes:
+#   - ResNet classifies the whole image → top-level `class` field.
+#   - YOLO detects abnormality regions → per-bbox `class` field.
+#
+# They are kept intentionally separate. A classifier can say "Normal" while
+# YOLO still finds a small region — or vice versa. This is valid model
+# disagreement, not an error.
 # ---------------------------------------------------------------------------
-UNIFIED_CLASSES: list[str] = [
+CLASSIFIER_CLASSES: list[str] = [
+    "Aortic enlargement",
+    "Atelectasis",
+    "Calcification",
+    "Cardiomegaly",
+    "Consolidation",
+    "ILD",
+    "Infiltration",
+    "Lung Opacity",
+    "Nodule/Mass",
     "Normal",
+    "Other lesion",
+    "Pleural effusion",
+    "Pleural thickening",
+    "Pneumothorax",
+    "Pulmonary fibrosis",
+]
+
+DETECTOR_CLASSES: list[str] = [
     "Aortic enlargement",
     "Atelectasis",
     "Calcification",
@@ -46,10 +69,29 @@ UNIFIED_CLASSES: list[str] = [
 ]
 
 
-class FindingClass(str, enum.Enum):
-    """Unified classification label from both ResNet-50 and YOLOv8m (15 classes)."""
+class ClassifierClass(str, enum.Enum):
+    """Whole-image label from ResNet-50 (15 classes: 14 findings + Normal)."""
 
+    AORTIC_ENLARGEMENT = "Aortic enlargement"
+    ATELECTASIS = "Atelectasis"
+    CALCIFICATION = "Calcification"
+    CARDIOMEGALY = "Cardiomegaly"
+    CONSOLIDATION = "Consolidation"
+    ILD = "ILD"
+    INFILTRATION = "Infiltration"
+    LUNG_OPACITY = "Lung Opacity"
+    NODULE_MASS = "Nodule/Mass"
     NORMAL = "Normal"
+    OTHER_LESION = "Other lesion"
+    PLEURAL_EFFUSION = "Pleural effusion"
+    PLEURAL_THICKENING = "Pleural thickening"
+    PNEUMOTHORAX = "Pneumothorax"
+    PULMONARY_FIBROSIS = "Pulmonary fibrosis"
+
+
+class DetectorClass(str, enum.Enum):
+    """Per-region label from YOLOv8 detector (14 abnormality classes only)."""
+
     AORTIC_ENLARGEMENT = "Aortic enlargement"
     ATELECTASIS = "Atelectasis"
     CALCIFICATION = "Calcification"

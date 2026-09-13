@@ -9,20 +9,20 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import Base, get_db
 from app.main import app
-from app.models import UNIFIED_CLASSES
+from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES
 
 TEST_DB_URL = "sqlite://"  # in-memory
 
 
 def _mock_predict(image_path: str, original_width: int, original_height: int) -> dict:
     """Mock predict that returns valid contract-shaped output for fast tests."""
-    chosen_class = random.choice(UNIFIED_CLASSES)
+    chosen_class = random.choice(CLASSIFIER_CLASSES)
 
     bboxes = []
     if chosen_class != "Normal":
         num_bboxes = random.randint(1, 3)
         for _ in range(num_bboxes):
-            bbox_class = random.choice(UNIFIED_CLASSES)
+            bbox_class = random.choice(DETECTOR_CLASSES)
             bx1 = random.randint(0, original_width // 2)
             by1 = random.randint(0, original_height // 2)
             bx2 = random.randint(bx1 + 10, min(bx1 + 200, original_width))
@@ -75,7 +75,6 @@ def client(db_session, monkeypatch):
         finally:
             pass
 
-    # Mock predict and is_model_loaded for fast tests (no real models needed)
     monkeypatch.setattr("app.routers.predictions.predict", _mock_predict)
     monkeypatch.setattr("app.routers.predictions.is_model_loaded", lambda: True)
 
@@ -100,7 +99,6 @@ def sample_image_upload(sample_image_bytes):
 
 @pytest.fixture()
 def uploaded_image_id(client, sample_image_upload):
-    """Upload an image and return its ID for use in tests."""
     filename, content, content_type = sample_image_upload
     resp = client.post(
         "/images/upload",
@@ -111,7 +109,6 @@ def uploaded_image_id(client, sample_image_upload):
 
 @pytest.fixture()
 def uploaded_image_with_prediction(client, sample_image_upload):
-    """Upload an image and create a prediction, return (image_id, prediction_id)."""
     filename, content, content_type = sample_image_upload
     resp = client.post(
         "/images/upload",

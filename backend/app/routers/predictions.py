@@ -14,12 +14,12 @@ from app.db import get_db
 from app.exceptions import AggregationError, NotFoundError
 from app.aggregation import build_prediction_record
 from app.ml_interface import is_model_loaded, predict
-from app.models import UNIFIED_CLASSES, Image as ImageModel, Prediction
+from app.models import CLASSIFIER_CLASSES, Image as ImageModel, Prediction
 from app.schemas import PaginatedResponse, PredictionListItem, PredictionRecord
 
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 
-_VALID_CLASSES = set(UNIFIED_CLASSES)
+_VALID_CLASSIFIER = set(CLASSIFIER_CLASSES)
 
 
 @router.post("/{image_id}", response_model=PredictionRecord, status_code=201)
@@ -74,10 +74,10 @@ async def list_predictions(
     if image_id is not None:
         query = query.filter(Prediction.image_id == image_id)
     if predicted_class is not None:
-        if predicted_class not in _VALID_CLASSES:
+        if predicted_class not in _VALID_CLASSIFIER:
             raise AggregationError(
                 f"Invalid predicted_class '{predicted_class}'. "
-                f"Valid classes: {sorted(_VALID_CLASSES)}"
+                f"Valid classes: {sorted(_VALID_CLASSIFIER)}"
             )
         query = query.filter(Prediction.predicted_class == predicted_class)
 

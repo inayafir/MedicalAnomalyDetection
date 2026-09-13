@@ -2,26 +2,27 @@ from __future__ import annotations
 
 import json
 
-from app.models import UNIFIED_CLASSES
+from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES
 
 
-_VALID_CLASSES = set(UNIFIED_CLASSES)
+_VALID_CLASSIFIER = set(CLASSIFIER_CLASSES)
+_VALID_DETECTOR = set(DETECTOR_CLASSES)
 
 
 def build_prediction_record(raw_ml_output: dict, image_id: int) -> dict:
     """Validate raw ML output and return a dict ready for DB persistence.
 
-    Top-level `class` and bbox `class` fields are validated against the
-    unified 15-class taxonomy.
+    Top-level `class` is validated against CLASSIFIER_CLASSES (15).
+    Each bbox `class` is validated against DETECTOR_CLASSES (14).
     """
     if not isinstance(raw_ml_output, dict):
         raise ValueError("ML output must be a dict")
 
     class_name = raw_ml_output.get("class")
-    if not class_name or class_name not in _VALID_CLASSES:
+    if not isinstance(class_name, str) or class_name not in _VALID_CLASSIFIER:
         raise ValueError(
-            f"Invalid class: {class_name!r}. "
-            f"Expected one of: {sorted(_VALID_CLASSES)}"
+            f"Invalid classifier class: {class_name!r}. "
+            f"Expected one of: {sorted(_VALID_CLASSIFIER)}"
         )
 
     confidence = raw_ml_output.get("confidence")
@@ -37,8 +38,11 @@ def build_prediction_record(raw_ml_output: dict, image_id: int) -> dict:
             if key not in bbox:
                 raise ValueError(f"bbox missing required key: {key}")
         bbox_class = bbox.get("class")
-        if not isinstance(bbox_class, str) or not bbox_class:
-            raise ValueError(f"bbox class must be a non-empty string, got {bbox_class!r}")
+        if not isinstance(bbox_class, str) or bbox_class not in _VALID_DETECTOR:
+            raise ValueError(
+                f"Invalid detector class: {bbox_class!r}. "
+                f"Expected one of: {sorted(_VALID_DETECTOR)}"
+            )
 
     heatmap_path = raw_ml_output.get("heatmap_path")
 
