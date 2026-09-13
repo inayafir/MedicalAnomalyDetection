@@ -3,7 +3,8 @@
 Deletes images, predictions, heatmaps, and reports older than DATA_RETENTION_DAYS.
 Run via: python scripts/cleanup_retention.py
 
-Set DATA_RETENTION_DAYS=0 to disable (default).
+Set DATA_RETENTION_DAYS=-1 to disable (default).
+Set DATA_RETENTION_DAYS=30 to delete records older than 30 days.
 """
 from __future__ import annotations
 
@@ -20,8 +21,8 @@ from app.models import Image, Prediction, Report
 
 
 def cleanup():
-    if settings.DATA_RETENTION_DAYS <= 0:
-        print("DATA_RETENTION_DAYS=0 — retention cleanup disabled")
+    if not settings.retention_enabled:
+        print(f"DATA_RETENTION_DAYS={settings.DATA_RETENTION_DAYS} — retention cleanup disabled")
         return
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=settings.DATA_RETENTION_DAYS)

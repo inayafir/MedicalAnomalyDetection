@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from app.config import settings
+from app.config import settings, validate_production_config
 from app.db import Base, engine
 from app.exceptions import (
     AggregationError,
@@ -55,6 +55,7 @@ if settings.SENTRY_DSN:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    validate_production_config()
     Path(settings.STORAGE_ROOT).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
     load_models()
@@ -69,12 +70,6 @@ app = FastAPI(
     docs_url="/docs" if not settings.is_production else None,
     redoc_url="/redoc" if not settings.is_production else None,
 )
-
-# --- Production CORS check ---
-if settings.is_production and "*" in settings.cors_origins_list:
-    logger.warning(
-        "CORS is wildcarded in production — set CORS_ORIGINS to an explicit list"
-    )
 
 # --- Middleware (order matters: outermost runs first) ---
 app.add_middleware(SecurityHeadersMiddleware)

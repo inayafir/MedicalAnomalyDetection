@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     API_KEY: Optional[str] = None
     SENTRY_DSN: Optional[str] = None
     RATE_LIMIT_PER_MINUTE: int = 10
-    DATA_RETENTION_DAYS: int = 0
+    DATA_RETENTION_DAYS: int = -1
 
     @property
     def allowed_content_types_list(self) -> list[str]:
@@ -39,7 +39,41 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
 
+    @property
+    def retention_enabled(self) -> bool:
+        return self.DATA_RETENTION_DAYS >= 0
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
 settings = Settings()
+
+
+def validate_production_config(s: Settings | None = None) -> None:
+    """Validate config for production. Raises ValueError if any check fails."""
+    s = s or settings
+    if not s.is_production:
+        return
+
+    errors = []
+
+    if not s.API_KEY:
+        errors.append(
+            "API_KEY must be set when ENVIRONMENT=production. "
+            "Refusing to start with authentication disabled."
+        )
+
+    if not s.CORS_ORIGINS or s.CORS_ORIGINS.strip() == "*":
+        errors.append(
+            "CORS_ORIGINS must be an explicit origin list in production, not '*'. "
+            "Refusing to start."
+        )
+
+    if s.DATABASE_URL.startswith("sqlite"):
+        errors.append(
+            "SQLite is not supported in production — set DATABASE_URL to a Postgres "
+            "connection string."
+        )
+
+    if errors:
+        raise ValueError("\n".join(errors))

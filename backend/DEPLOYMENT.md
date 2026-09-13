@@ -4,14 +4,21 @@
 
 All configuration is via environment variables (see `.env.example` for defaults).
 
-### Required for production
+### Required for production (enforced at startup)
+
+The app **refuses to start** in production if any of these are misconfigured:
+
+| Variable | Example | Enforced rule |
+|---|---|---|
+| `ENVIRONMENT` | `production` | Must be `production` to activate checks |
+| `API_KEY` | `a-long-random-string` | Must be set and non-empty |
+| `CORS_ORIGINS` | `https://yourapp.com` | Must be an explicit origin list (no `*`) |
+| `DATABASE_URL` | `postgresql://user:pass@host:5432/dbname` | Must not be `sqlite://` |
+
+Additional production requirements:
 
 | Variable | Example | Description |
 |---|---|---|
-| `ENVIRONMENT` | `production` | Enables stricter security defaults |
-| `DATABASE_URL` | `postgresql://user:pass@host:5432/dbname` | Use Postgres in production |
-| `CORS_ORIGINS` | `https://yourapp.com` | Comma-separated allowed origins (no wildcards) |
-| `API_KEY` | `a-long-random-string` | Shared secret for all non-health endpoints |
 | `RESNET_CHECKPOINT` | `ml_core/checkpoints/resnet50.pth` | ResNet-50 weights (15 classes) |
 | `YOLO_CHECKPOINT` | `ml_core/checkpoints/yolov8m_14class.pt` | YOLOv8m weights (14 classes) |
 
@@ -21,7 +28,7 @@ All configuration is via environment variables (see `.env.example` for defaults)
 |---|---|---|
 | `SENTRY_DSN` | (unset) | Sentry DSN for error tracking |
 | `RATE_LIMIT_PER_MINUTE` | `10` | Requests/min per IP on upload/prediction |
-| `DATA_RETENTION_DAYS` | `0` | Auto-delete old data (0 = disabled) |
+| `DATA_RETENTION_DAYS` | `-1` | `-1` = disabled (default), `30` = delete records older than 30 days |
 | `ML_DEVICE` | `cpu` | `cpu` or `cuda` |
 
 ## Checkpoint Delivery
@@ -35,7 +42,7 @@ Model checkpoints (~320MB total) are tracked via **Git LFS**. Options:
 ## Database
 
 - **Development**: SQLite (default, zero config)
-- **Production**: Use managed Postgres (e.g. Render Postgres, Supabase). Update `DATABASE_URL`.
+- **Production**: Use managed Postgres (e.g. Render Postgres, Supabase). The app **refuses to start** if `DATABASE_URL` is `sqlite://` in production.
 - **Migrations**: The app uses `Base.metadata.create_all()` which is fine for initial setup. For schema changes in production, adopt **Alembic** before making breaking changes to the ORM models.
 
 ## Running
@@ -61,7 +68,13 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ## Data Retention
 
-Set `DATA_RETENTION_DAYS` to auto-delete old data. Run the cleanup manually:
+`DATA_RETENTION_DAYS` controls auto-cleanup:
+
+- `-1` (default): Retention disabled, data kept indefinitely
+- `0`: Delete all records immediately (on next cleanup run)
+- `30`: Delete records older than 30 days
+
+Run the cleanup manually:
 
 ```bash
 python scripts/cleanup_retention.py
