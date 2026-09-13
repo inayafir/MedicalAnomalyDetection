@@ -19,24 +19,16 @@ from app.db import Base
 
 
 # ---------------------------------------------------------------------------
-# Classifier classes (ResNet-50, 5 classes)
-# These drive the top-level `predicted_class` field in the prediction contract.
-# Source: checkpoint["class_names"] at load time.
+# Unified 15-class taxonomy (both ResNet-50 and YOLOv8m).
+# Both models have been retrained to output the same 15 classes.
+#
+#   14 disease classes + Normal = 15 total
+#
+# Source: checkpoint["class_names"] (ResNet) / model.names (YOLO) at load time.
+# The server validates class counts at startup and fails if they don't match.
 # ---------------------------------------------------------------------------
-CLASSIFIER_CLASSES: list[str] = [
+UNIFIED_CLASSES: list[str] = [
     "Normal",
-    "Cardiomegaly",
-    "Pleural effusion",
-    "Lung Opacity",
-    "Pulmonary fibrosis",
-]
-
-# ---------------------------------------------------------------------------
-# Detector classes (YOLOv8m, 14 classes — disease-only, no "Normal")
-# These drive each bbox's `class` field in the prediction contract.
-# Source: model.names at load time.
-# ---------------------------------------------------------------------------
-DETECTOR_CLASSES: list[str] = [
     "Aortic enlargement",
     "Atelectasis",
     "Calcification",
@@ -55,12 +47,22 @@ DETECTOR_CLASSES: list[str] = [
 
 
 class FindingClass(str, enum.Enum):
-    """Top-level classification label from the ResNet-50 classifier (5 classes)."""
+    """Unified classification label from both ResNet-50 and YOLOv8m (15 classes)."""
 
     NORMAL = "Normal"
+    AORTIC_ENLARGEMENT = "Aortic enlargement"
+    ATELECTASIS = "Atelectasis"
+    CALCIFICATION = "Calcification"
     CARDIOMEGALY = "Cardiomegaly"
-    PLEURAL_EFFUSION = "Pleural effusion"
+    CONSOLIDATION = "Consolidation"
+    ILD = "ILD"
+    INFILTRATION = "Infiltration"
     LUNG_OPACITY = "Lung Opacity"
+    NODULE_MASS = "Nodule/Mass"
+    OTHER_LESION = "Other lesion"
+    PLEURAL_EFFUSION = "Pleural effusion"
+    PLEURAL_THICKENING = "Pleural thickening"
+    PNEUMOTHORAX = "Pneumothorax"
     PULMONARY_FIBROSIS = "Pulmonary fibrosis"
 
 

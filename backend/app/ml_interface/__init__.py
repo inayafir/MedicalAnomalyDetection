@@ -12,15 +12,14 @@ from app.storage import save_heatmap
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Two separate models with different class taxonomies:
+# Two models, unified 15-class taxonomy:
 #
-#   ResNet-50 classifier → top-level `class` / `confidence` (5 classes)
-#   YOLOv8m detector      → per-bbox `class` / `confidence` (14 disease classes)
+#   ResNet-50 classifier → top-level `class` / `confidence` (15 classes)
+#   YOLOv8m detector      → per-bbox `class` / `confidence` (15 classes)
 #
-# These are intentionally kept as separate label sets. The classifier gives
-# a single whole-image label; the detector gives per-region boxes with their
-# own finer-grained labels. Forcing them into one enum would silently lose
-# information.
+# Both models have been retrained on the same 15-class VinBigData taxonomy:
+# 14 disease classes + Normal. The classifier gives a single whole-image label;
+# the detector gives per-region boxes with their own labels.
 # ---------------------------------------------------------------------------
 
 _MODEL_LOADED = False
@@ -92,9 +91,9 @@ def _load_yolo():
     yolo_mod.model = YOLO(str(model_path))
     _YOLO_CLASS_NAMES = list(yolo_mod.model.names.values())
 
-    if len(_YOLO_CLASS_NAMES) != 14:
+    if len(_YOLO_CLASS_NAMES) != 15:
         raise ValueError(
-            f"Expected 14 detector classes, got {len(_YOLO_CLASS_NAMES)}: {_YOLO_CLASS_NAMES}"
+            f"Expected 15 classes, got {len(_YOLO_CLASS_NAMES)}: {_YOLO_CLASS_NAMES}"
         )
 
     logger.info("YOLOv8m loaded: %d classes from %s", len(_YOLO_CLASS_NAMES), model_path)
@@ -131,9 +130,9 @@ def _load_resnet():
             "ResNet checkpoint missing 'class_names' key — cannot determine class order"
         )
 
-    if len(_RESNET_CLASS_NAMES) != 5:
+    if len(_RESNET_CLASS_NAMES) != 15:
         raise ValueError(
-            f"Expected 5 classifier classes, got {len(_RESNET_CLASS_NAMES)}: {_RESNET_CLASS_NAMES}"
+            f"Expected 15 classes, got {len(_RESNET_CLASS_NAMES)}: {_RESNET_CLASS_NAMES}"
         )
 
     num_classes = len(_RESNET_CLASS_NAMES)
@@ -160,12 +159,12 @@ def is_model_loaded() -> bool:
 
 
 def get_classifier_classes() -> list[str]:
-    """Return the 5 classifier class names (from ResNet checkpoint)."""
+    """Return the 15 class names from the ResNet checkpoint."""
     return list(_RESNET_CLASS_NAMES)
 
 
 def get_detector_classes() -> list[str]:
-    """Return the 14 detector class names (from YOLO checkpoint)."""
+    """Return the 15 class names from the YOLO checkpoint."""
     return list(_YOLO_CLASS_NAMES)
 
 

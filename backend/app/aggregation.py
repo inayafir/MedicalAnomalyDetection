@@ -2,27 +2,26 @@ from __future__ import annotations
 
 import json
 
-from app.models import CLASSIFIER_CLASSES
+from app.models import UNIFIED_CLASSES
 
 
-_VALID_CLASSIFIER = set(CLASSIFIER_CLASSES)
+_VALID_CLASSES = set(UNIFIED_CLASSES)
 
 
 def build_prediction_record(raw_ml_output: dict, image_id: int) -> dict:
     """Validate raw ML output and return a dict ready for DB persistence.
 
-    Top-level `class` is validated against CLASSIFIER_CLASSES (5).
-    Bbox `class` fields are validated as non-empty strings (14 detector classes
-    are not enum-constrained here — they come from the YOLO model's own labels).
+    Top-level `class` and bbox `class` fields are validated against the
+    unified 15-class taxonomy.
     """
     if not isinstance(raw_ml_output, dict):
         raise ValueError("ML output must be a dict")
 
     class_name = raw_ml_output.get("class")
-    if not class_name or class_name not in _VALID_CLASSIFIER:
+    if not class_name or class_name not in _VALID_CLASSES:
         raise ValueError(
-            f"Invalid classifier class: {class_name!r}. "
-            f"Expected one of: {sorted(_VALID_CLASSIFIER)}"
+            f"Invalid class: {class_name!r}. "
+            f"Expected one of: {sorted(_VALID_CLASSES)}"
         )
 
     confidence = raw_ml_output.get("confidence")

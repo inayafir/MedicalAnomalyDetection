@@ -9,26 +9,26 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import Base, get_db
 from app.main import app
-from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES
+from app.models import UNIFIED_CLASSES
 
 TEST_DB_URL = "sqlite://"  # in-memory
 
 
 def _mock_predict(image_path: str, original_width: int, original_height: int) -> dict:
     """Mock predict that returns valid contract-shaped output for fast tests."""
-    chosen_class = random.choice(CLASSIFIER_CLASSES)
+    chosen_class = random.choice(UNIFIED_CLASSES)
 
     bboxes = []
     if chosen_class != "Normal":
         num_bboxes = random.randint(1, 3)
         for _ in range(num_bboxes):
-            detector_class = random.choice(DETECTOR_CLASSES)
+            bbox_class = random.choice(UNIFIED_CLASSES)
             bx1 = random.randint(0, original_width // 2)
             by1 = random.randint(0, original_height // 2)
             bx2 = random.randint(bx1 + 10, min(bx1 + 200, original_width))
             by2 = random.randint(by1 + 10, min(by1 + 200, original_height))
             bboxes.append({
-                "class": detector_class,
+                "class": bbox_class,
                 "x1": bx1,
                 "y1": by1,
                 "x2": bx2,

@@ -39,50 +39,39 @@ cd backend
 docker compose up --build
 ```
 
-## 2. Two Label Sets — Why They're Different
+## 2. Unified 15-Class Taxonomy
 
-The backend uses **two separate models** that output **different label sets** for different tasks. They are intentionally not merged into one enum.
+Both the ResNet-50 classifier and YOLOv8m detector have been retrained on the same 15-class VinBigData taxonomy.
 
-### Classifier (ResNet-50, 5 classes)
+### Classification (ResNet-50, 15 classes)
 
 Produces a single **whole-image label**. This is the top-level `predicted_class` field.
+
+### Detection (YOLOv8m, 15 classes)
+
+Produces **per-region bounding boxes**, each with its own label. These are the `bboxes[].class` fields. The YOLO model can also output "Normal" for regions it considers healthy.
+
+### Classes
 
 | Index | Class Name |
 |-------|------------|
 | 0 | Normal |
-| 1 | Cardiomegaly |
-| 2 | Pleural effusion |
-| 3 | Lung Opacity |
-| 4 | Pulmonary fibrosis |
+| 1 | Aortic enlargement |
+| 2 | Atelectasis |
+| 3 | Calcification |
+| 4 | Cardiomegaly |
+| 5 | Consolidation |
+| 6 | ILD |
+| 7 | Infiltration |
+| 8 | Lung Opacity |
+| 9 | Nodule/Mass |
+| 10 | Other lesion |
+| 11 | Pleural effusion |
+| 12 | Pleural thickening |
+| 13 | Pneumothorax |
+| 14 | Pulmonary fibrosis |
 
-Source: `checkpoint["class_names"]` from `ml_core/checkpoints/resnet50.pth`
-
-### Detector (YOLOv8m, 14 disease classes)
-
-Produces **per-region bounding boxes**, each with its own label. These are the `bboxes[].class` fields. The detector has no "Normal" class — if nothing is detected, the bboxes list is empty.
-
-| Index | Class Name |
-|-------|------------|
-| 0 | Aortic enlargement |
-| 1 | Atelectasis |
-| 2 | Calcification |
-| 3 | Cardiomegaly |
-| 4 | Consolidation |
-| 5 | ILD |
-| 6 | Infiltration |
-| 7 | Lung Opacity |
-| 8 | Nodule/Mass |
-| 9 | Other lesion |
-| 10 | Pleural effusion |
-| 11 | Pleural thickening |
-| 12 | Pneumothorax |
-| 13 | Pulmonary fibrosis |
-
-Source: `model.names` from `ml_core/checkpoints/yolov8m_14class.pt`
-
-**Why two sets?** The classifier gives a single overall impression (one label for the whole image). The detector finds specific regions and labels them with finer granularity. For example, the classifier might say "Normal" while the detector still finds a small "Atelectasis" region — or the classifier might say "Cardiomegaly" while the detector also finds "Aortic enlargement" in the same image. Both pieces of information are useful; collapsing them into one set would silently lose information.
-
-If the frontend needs a simplified "does this box match the overall finding" view, that's a **display decision** — not something baked into the backend contract.
+Source: `checkpoint["class_names"]` (ResNet) / `model.names` (YOLO) at load time. The server validates class counts at startup and fails if they don't match (15 expected for both).
 
 ## 3. API Reference
 

@@ -1,7 +1,7 @@
 import pytest
 
 from app.aggregation import build_prediction_record
-from app.models import CLASSIFIER_CLASSES, DETECTOR_CLASSES
+from app.models import UNIFIED_CLASSES
 
 
 class TestBuildPredictionRecord:
@@ -44,7 +44,7 @@ class TestBuildPredictionRecord:
         assert result["predicted_class"] == "Pulmonary fibrosis"
 
     def test_bbox_uses_detector_class_not_classifier_class(self):
-        """Bbox class can be any of the 14 detector classes, not just the 5 classifier classes."""
+        """Bbox class can be any of the 15 unified classes."""
         raw = {
             "class": "Normal",
             "confidence": 0.95,
@@ -60,16 +60,16 @@ class TestBuildPredictionRecord:
         assert bboxes[0]["class"] == "Atelectasis"
         assert bboxes[1]["class"] == "Nodule/Mass"
 
-    def test_invalid_classifier_class(self):
+    def test_invalid_class(self):
         raw = {"class": "InvalidClass", "confidence": 0.5, "bboxes": []}
-        with pytest.raises(ValueError, match="Invalid classifier class"):
+        with pytest.raises(ValueError, match="Invalid class"):
             build_prediction_record(raw, image_id=1)
 
-    def test_detector_class_not_validated_as_classifier(self):
-        """A detector class used as top-level class should be rejected."""
+    def test_unified_class_accepted_as_top_level(self):
+        """Any of the 15 classes can be used as top-level class."""
         raw = {"class": "Atelectasis", "confidence": 0.5, "bboxes": []}
-        with pytest.raises(ValueError, match="Invalid classifier class"):
-            build_prediction_record(raw, image_id=1)
+        result = build_prediction_record(raw, image_id=1)
+        assert result["predicted_class"] == "Atelectasis"
 
     def test_confidence_out_of_range(self):
         raw = {"class": "Cardiomegaly", "confidence": 1.5, "bboxes": []}
