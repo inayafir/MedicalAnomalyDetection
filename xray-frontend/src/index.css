@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-void: #0a0e13;
+  --color-panel: #10151c;
+  --color-panel-raised: #161d26;
+  --color-line: #232d38;
+  --color-line-soft: #1a222c;
+
+  --color-ink: #e7edf1;
+  --color-ink-dim: #97a8b3;
+  --color-ink-faint: #5d6d78;
+
+  --color-teal: #3fb6ad;
+  --color-teal-dim: #29453f;
+  --color-amber: #d6a349;
+  --color-alert: #d1543f;
+  --color-alert-dim: #3a2321;
+
+  --color-backlight: #cfe7ee;
+}
+
+html { color-scheme: dark; }
+
+body {
+  background: var(--color-void);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--color-teal-dim); color: var(--color-ink); }
+
+.font-data {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-teal);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media print {
+  .no-print { display: none !important; }
+  body { background: white; color: black; }
+}

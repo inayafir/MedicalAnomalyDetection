@@ -1,0 +1,20 @@
+# CPU-only torch/torchvision.
+#
+# Install these BEFORE requirements.txt, from the dedicated CPU wheel index:
+#
+#   pip install -r requirements-torch-cpu.txt --extra-index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+# Why a separate file: `pip install torch` from plain PyPI resolves to a
+# CUDA-enabled build whose *import* (not just .cuda() calls) hard-requires
+# nvidia-cublas / nvidia-cudnn / nvidia-nccl / etc. even when you only ever
+# run CPU inference. That pulls several GB of unused packages, which:
+#   - fails on disk-constrained CI/dev boxes ("No space left on device")
+#   - massively bloats the Docker image and slows every Render build
+#   - installs GPU driver dependencies that a CPU-only inference server never uses
+#
+# The versions below are known-compatible CPU wheels for Python 3.11.
+# If you bump these, confirm a matching pair exists at
+# https://download.pytorch.org/whl/cpu/torch_stable.html
+torch==2.9.1
+torchvision==0.24.1

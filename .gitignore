@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Dataset - do NOT upload to GitHub
+data/raw/
+data/processed/
+
+# Model weights (root-level duplicates only)
+/*.pt
+/*.pth
+
+# Final trained models - tracked with Git LFS
+!models/
+!models/resnet50/
+!models/resnet50/best_model.pth
+!models/yolov8/
+!models/yolov8/best.pt
+
+*.onnx
+
+# Training outputs
+runs/
+outputs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dataset archive
+*.zip
+
+# Backend
+backend/storage/
+backend/.env
+backend/.pytest_cache/
+*.db
