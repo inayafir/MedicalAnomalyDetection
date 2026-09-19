@@ -7,8 +7,19 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
 
+# Render's managed Postgres provides DATABASE_URL as "postgres://..." or
+# "postgresql://...". SQLAlchemy needs the driver named explicitly for the
+# psycopg3 driver we install (psycopg[binary]), or it defaults to psycopg2
+# (not installed) and fails to connect. Normalize both prefixes here so the
+# raw Render-provided URL can be used as-is via the DATABASE_URL env var.
+_db_url = settings.DATABASE_URL
+if _db_url.startswith("postgres://"):
+    _db_url = _db_url.replace("postgres://", "postgresql+psycopg://", 1)
+elif _db_url.startswith("postgresql://"):
+    _db_url = _db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
 engine = create_engine(
-    settings.DATABASE_URL,
+    _db_url,
     connect_args={"check_same_thread": False}
     if settings.DATABASE_URL.startswith("sqlite")
     else {},

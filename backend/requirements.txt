@@ -1,14 +1,17 @@
 fastapi>=0.100,<1.0
 uvicorn[standard]>=0.23,<1.0
 sqlalchemy>=2.0,<3.0
+psycopg[binary]>=3.1,<4.0
 pydantic>=2.0,<3.0
 pydantic-settings>=2.0,<3.0
 python-multipart>=0.0.5
 pillow>=9.0,<13.0
 eval_type_backport>=0.2
 # ML inference
-torch>=2.0
-torchvision>=0.15
+# NOTE: torch/torchvision are intentionally NOT listed here.
+# See requirements-torch-cpu.txt — installing plain "torch" from PyPI pulls
+# ~5GB of unused CUDA packages (nvidia-cublas, nvidia-cudnn, nvidia-nccl, etc.)
+# even for CPU-only inference, which blows disk/build budgets on Render.
 ultralytics>=8.0
 opencv-python>=4.8
 # Security / rate limiting

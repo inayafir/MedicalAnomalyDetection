@@ -26,6 +26,49 @@ _MODEL_LOADED = False
 _RESNET_CLASS_NAMES: list[str] = []
 _YOLO_CLASS_NAMES: list[str] = []
 
+# A real Git LFS pointer file is always tiny (~130 bytes) and starts with this
+# exact text. A genuine .pt/.pth checkpoint is tens or hundreds of MB of binary
+# zip data, so this check is cheap, reliable, and catches the pointer case
+# before torch/ultralytics ever try to parse it as a real checkpoint.
+_LFS_POINTER_SIGNATURE = b"version https://git-lfs.github.com/spec/v1"
+_LFS_POINTER_MAX_BYTES = 1024  # real checkpoints are always far larger than this
+
+
+def _check_not_lfs_pointer(model_path: Path, label: str) -> None:
+    """Raise a clear, actionable error if `model_path` is a Git LFS pointer
+    instead of the real binary checkpoint. Silent failure here is not
+    acceptable for a medical inference path — it must be caught here, not
+    surfaced as a cryptic torch/ultralytics parse error deep in load_state_dict."""
+    size = model_path.stat().st_size
+    if size > _LFS_POINTER_MAX_BYTES:
+        return  # too big to be a pointer — real checkpoint, proceed
+
+    try:
+        head = model_path.read_bytes()[:200]
+    except OSError as e:
+        raise RuntimeError(f"{label} checkpoint at {model_path} could not be read: {e}") from e
+
+    if head.startswith(_LFS_POINTER_SIGNATURE):
+        raise RuntimeError(
+            f"{label} checkpoint at {model_path} is a Git LFS pointer "
+            f"({size} bytes), not the real trained weights. "
+            "The actual binary file was never pulled from LFS storage.\n"
+            "Fix this by running, from the repo root:\n"
+            "  git lfs install\n"
+            "  git lfs pull\n"
+            "Then verify with:\n"
+            f"  ls -la {model_path}   # should show tens/hundreds of MB, not ~130 bytes\n"
+            "Refusing to load — will NOT fall back to a pretrained or mock model "
+            "for a medical inference path."
+        )
+
+    # Small but not a recognizable LFS pointer either — still not a valid checkpoint.
+    raise RuntimeError(
+        f"{label} checkpoint at {model_path} is only {size} bytes — far too small "
+        "to be a real trained checkpoint, and it is not a recognizable Git LFS "
+        f"pointer either. First bytes: {head[:80]!r}"
+    )
+
 
 def load_models():
     """Load both real checkpoints at startup. Fails loudly if either is missing or malformed."""
@@ -85,6 +128,8 @@ def _load_yolo():
             "See README section 'Checkpoint setup' for details."
         )
 
+    _check_not_lfs_pointer(model_path, "YOLO")
+
     from app.ml_interface import _yolo as yolo_mod
 
     yolo_mod.model = YOLO(str(model_path))
@@ -116,6 +161,8 @@ def _load_resnet():
             "  git lfs pull\n"
             "See README section 'Checkpoint setup' for details."
         )
+
+    _check_not_lfs_pointer(model_path, "ResNet")
 
     device = torch.device(settings.ML_DEVICE)
     checkpoint = torch.load(str(model_path), map_location=device, weights_only=False)

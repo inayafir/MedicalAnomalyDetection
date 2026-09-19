@@ -1,0 +1,71 @@
+databases:
+  - name: medical-anomaly-db
+    databaseName: medical_anomaly
+    plan: free
+    postgresMajorVersion: 16
+
+services:
+  - type: web
+    name: medical-anomaly-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: starter
+    healthCheckPath: /health/live
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: medical-anomaly-db
+          property: connectionString
+      - key: STORAGE_ROOT
+        value: /app/storage
+      - key: ML_DEVICE
+        value: cpu
+      - key: CORS_ORIGINS
+        # REQUIRED: replace with your actual deployed frontend origin(s), comma-separated.
+        # validate_production_config() refuses to start if this is left as "*".
+        sync: false
+      - key: API_KEY
+        # REQUIRED: generate a strong random value in the Render dashboard.
+        # validate_production_config() refuses to start if this is unset.
+        generateValue: true
+      - key: RESNET_CHECKPOINT
+        value: ml_core/checkpoints/resnet50.pth
+      - key: YOLO_CHECKPOINT
+        value: ml_core/checkpoints/yolov8m_14class.pt
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "10"
+      - key: DATA_RETENTION_DAYS
+        value: "-1"
+      - key: SENTRY_DSN
+        sync: false
+
+# ---------------------------------------------------------------------------
+# Notes (read before deploying):
+#
+# 1. Postgres free tier: Render's free Postgres plan expires after 30 days
+#    and has no automated backups. Fine for a final-year demo; upgrade the
+#    `plan:` under `databases:` before anything you need to keep long-term.
+#
+# 2. Model weights via Git LFS: Render's git clone step resolves LFS-tracked
+#    files automatically before the Docker build starts — no extra build
+#    step is needed. But GitHub's free LFS tier has a monthly bandwidth
+#    quota (1GB by default); once exceeded, GitHub starts serving the raw
+#    ~130-byte pointer text instead of erroring. The startup validation in
+#    ml_interface/__init__.py (_check_not_lfs_pointer) exists specifically
+#    to catch that case loudly instead of silently trying to run inference
+#    on a text file. If a deploy fails at startup with an "LFS pointer"
+#    error, check your repo's LFS bandwidth usage on GitHub first.
+#
+# 3. CORS_ORIGINS and API_KEY are marked `sync: false` / `generateValue: true`
+#    deliberately — CORS_ORIGINS must be set to your real frontend URL by
+#    you (not committed here), and API_KEY should be a secret Render
+#    generates, not a value in version control.
+#
+# 4. CPU-only inference: this Blueprint does not request a GPU instance.
+#    requirements-torch-cpu.txt + the Dockerfile's install order keep the
+#    image on CPU-only torch — do not add a GPU plan without also switching
+#    back to a CUDA-enabled torch build.
+# ---------------------------------------------------------------------------
