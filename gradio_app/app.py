@@ -68,21 +68,137 @@ SCREEN_NAMES = [
 
 CUSTOM_CSS = """
 :root {
-    --navy: #1E3A8A;
-    --cyan: #06B6D4;
-    --bg: #F8FAFC;
+    --navy: #0B3D91;
+    --navy-dark: #062A66;
+    --teal: #0EA5A0;
+    --cyan: #22D3EE;
+    --coral: #FB7185;
+    --bg: #EEF4FF;
     --card: #FFFFFF;
     --ink: #0F172A;
     --muted: #64748B;
     --success: #16A34A;
-    --success-light: #ecfdf3;
+    --success-light: #ECFDF3;
     --warning: #F59E0B;
-    --warning-light: #fffbeb;
+    --warning-light: #FFFBEB;
     --line: #E2E8F0;
 }
 
+/* ------------------------------------------------------------------ */
+/* Force light mode — stops Gradio's dark theme from turning the      */
+/* Patient Info / Upload blocks black on dark-mode browsers/OS        */
+/* ------------------------------------------------------------------ */
+
+:root, .gradio-container {
+    color-scheme: light !important;
+}
+
+/* ------------------------------------------------------------------ */
+/* Override Gradio's own theme variables — this is what actually      */
+/* controls the blue "block label" chips (Patient Name / Patient ID / */
+/* Upload X-Ray badges) and the faint upload dropzone text.           */
+/* ------------------------------------------------------------------ */
+
 .gradio-container {
-    background: var(--bg) !important;
+    --block-label-background-fill: transparent !important;
+    --block-label-text-color: var(--muted) !important;
+    --block-label-border-width: 0px !important;
+    --block-label-shadow: none !important;
+    --block-label-margin: 0 !important;
+
+    --body-text-color: var(--ink) !important;
+    --body-text-color-subdued: var(--muted) !important;
+
+    --input-background-fill: var(--card) !important;
+    --input-background-fill-focus: var(--card) !important;
+    --input-border-color: var(--line) !important;
+    --input-border-color-focus: var(--teal) !important;
+    --input-placeholder-color: var(--muted) !important;
+
+    --block-background-fill: var(--card) !important;
+    --block-border-color: var(--line) !important;
+    --border-color-primary: var(--line) !important;
+
+    --neutral-50: var(--card) !important;
+    --neutral-100: var(--card) !important;
+}
+
+/* Label chip text (was rendering as a solid blue badge) */
+.gradio-container label span,
+.gradio-container .block > label,
+.gradio-container [data-testid="block-info"] {
+    background: transparent !important;
+    color: var(--muted) !important;
+    font-weight: 600 !important;
+    box-shadow: none !important;
+    border: none !important;
+}
+
+/* Upload dropzone icon + "Drop File Here / - or - / Click to Upload" text */
+.gradio-container .upload-container,
+.gradio-container .upload-container *,
+.gradio-container [data-testid="file"] .wrap,
+.gradio-container [data-testid="file"] .wrap * {
+    color: var(--ink) !important;
+    opacity: 1 !important;
+}
+
+.gradio-container .upload-container svg,
+.gradio-container [data-testid="file"] svg {
+    stroke: var(--muted) !important;
+    fill: var(--muted) !important;
+}
+
+.gradio-container {
+    background: linear-gradient(180deg, #EFF6FF 0%, #F0FDFA 55%, #F8FAFC 100%) !important;
+}
+
+/* Raw Gradio blocks (rows/columns wrapping our inputs) */
+.gradio-container .block,
+.gradio-container .form,
+.gr-box,
+.gr-panel,
+.gradio-container .gr-group,
+.gradio-container fieldset {
+    background: var(--card) !important;
+    color: var(--ink) !important;
+    border-color: var(--line) !important;
+}
+
+/* Textboxes (Patient Name / Patient ID) */
+.gradio-container input[type="text"],
+.gradio-container input[type="number"],
+.gradio-container textarea {
+    background: var(--card) !important;
+    color: var(--ink) !important;
+    border-color: var(--line) !important;
+}
+
+.gradio-container input[type="text"]::placeholder,
+.gradio-container textarea::placeholder {
+    color: var(--muted) !important;
+}
+
+/* Labels above inputs */
+.gradio-container label span,
+.gradio-container .block > label {
+    color: var(--ink) !important;
+}
+
+/* File upload drop zone */
+.gradio-container [data-testid="file"],
+.gradio-container .upload-container,
+.gradio-container .upload-box,
+.gradio-container .wrap.default {
+    background: var(--card) !important;
+    color: var(--ink) !important;
+    border-color: var(--line) !important;
+}
+
+/* Image preview component frame */
+.gradio-container .image-container,
+.gradio-container .image-frame {
+    background: var(--card) !important;
 }
 
 footer {
@@ -91,9 +207,10 @@ footer {
 
 .screen-title {
     color: var(--navy);
-    font-size: 1.6em;
-    font-weight: 700;
+    font-size: 1.7em;
+    font-weight: 800;
     margin-bottom: 2px;
+    letter-spacing: -0.01em;
 }
 
 .screen-subtitle {
@@ -102,34 +219,180 @@ footer {
     margin-bottom: 4px;
 }
 
-/* Welcome */
+/* ------------------------------------------------------------------ */
+/* Welcome / hero                                                      */
+/* ------------------------------------------------------------------ */
 
 .welcome-hero {
     background: linear-gradient(
-        135deg,
+        120deg,
         var(--navy) 0%,
-        #16307a 100%
+        var(--navy-dark) 35%,
+        var(--teal) 100%
     );
     color: white;
-    border-radius: 16px;
-    padding: 48px 36px;
+    border-radius: 22px;
+    padding: 56px 40px 44px 40px;
     text-align: center;
-    margin: 10px 0 18px 0;
+    margin: 10px 0 22px 0;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 20px 40px -12px rgba(11, 61, 145, 0.45);
+}
+
+.welcome-hero::before {
+    content: "";
+    position: absolute;
+    top: -60px;
+    right: -60px;
+    width: 220px;
+    height: 220px;
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.35) 0%, transparent 70%);
+    border-radius: 50%;
+}
+
+.welcome-hero::after {
+    content: "";
+    position: absolute;
+    bottom: -80px;
+    left: -40px;
+    width: 260px;
+    height: 260px;
+    background: radial-gradient(circle, rgba(251, 113, 133, 0.20) 0%, transparent 70%);
+    border-radius: 50%;
+}
+
+.welcome-badge {
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    color: #E0F2FE;
+    padding: 6px 16px;
+    border-radius: 999px;
+    font-size: 0.78em;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 18px;
+    position: relative;
+    z-index: 1;
 }
 
 .welcome-hero h1 {
-    margin: 0 0 10px 0;
-    font-size: 2em;
+    margin: 0 0 12px 0;
+    font-size: 2.3em;
+    font-weight: 800;
+    position: relative;
+    z-index: 1;
+    letter-spacing: -0.02em;
 }
 
 .welcome-hero p {
     margin: 0 auto;
-    opacity: 0.9;
-    font-size: 1.02em;
+    opacity: 0.92;
+    font-size: 1.05em;
     max-width: 560px;
+    position: relative;
+    z-index: 1;
+    line-height: 1.5;
 }
 
-/* Cards */
+.feature-strip {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 26px;
+    position: relative;
+    z-index: 1;
+}
+
+.feature-pill {
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    backdrop-filter: blur(4px);
+    border-radius: 14px;
+    padding: 10px 18px;
+    font-size: 0.88em;
+    font-weight: 600;
+    color: #F0F9FF;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+@media (max-width: 900px) {
+    .feature-grid { grid-template-columns: 1fr; }
+}
+
+.feature-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 22px 20px;
+    text-align: center;
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.05);
+    transition: transform 0.15s ease;
+}
+
+.feature-card .icon-circle {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6em;
+    margin: 0 auto 12px auto;
+}
+
+.feature-card .icon-circle.blue {
+    background: linear-gradient(135deg, #DBEAFE, #BFDBFE);
+}
+
+.feature-card .icon-circle.teal {
+    background: linear-gradient(135deg, #CCFBF1, #99F6E4);
+}
+
+.feature-card .icon-circle.coral {
+    background: linear-gradient(135deg, #FFE4E6, #FECDD3);
+}
+
+.feature-card h4 {
+    margin: 0 0 6px 0;
+    color: var(--navy);
+    font-size: 1em;
+    font-weight: 700;
+}
+
+.feature-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.85em;
+    line-height: 1.4;
+}
+
+.disclaimer-banner {
+    background: var(--warning-light);
+    border: 1px solid #FDE68A;
+    color: #92400E;
+    border-radius: 12px;
+    padding: 12px 18px;
+    font-size: 0.85em;
+    text-align: center;
+    margin-bottom: 6px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Cards                                                                */
+/* ------------------------------------------------------------------ */
 
 .card {
     background: var(--card);
@@ -144,6 +407,7 @@ footer {
     margin: 0 0 8px 0;
     color: var(--navy);
     font-size: 1.05em;
+    font-weight: 700;
 }
 
 .card-note {
@@ -192,14 +456,16 @@ footer {
 
 .prediction-card {
     background: linear-gradient(
-        135deg,
+        120deg,
         var(--navy) 0%,
-        #16307a 100%
+        var(--navy-dark) 40%,
+        var(--teal) 100%
     );
     color: white;
-    border-radius: 14px;
-    padding: 22px 26px;
+    border-radius: 16px;
+    padding: 24px 28px;
     margin: 6px 0 16px 0;
+    box-shadow: 0 14px 30px -10px rgba(11, 61, 145, 0.4);
 }
 
 .prediction-card .kicker {
@@ -212,14 +478,14 @@ footer {
 
 .prediction-card .cls {
     font-size: 2.1em;
-    font-weight: 700;
+    font-weight: 800;
 }
 
 .prediction-card .conf {
     margin-top: 8px;
     font-size: 1.05em;
     color: var(--cyan);
-    font-weight: 600;
+    font-weight: 700;
 }
 
 .prediction-card .model-tag {
@@ -489,13 +755,52 @@ with gr.Blocks(title="Medical X-Ray Analysis") as demo:
         gr.HTML(
             """
             <div class="welcome-hero">
+                <div class="welcome-badge">AI-Assisted Radiology Support</div>
                 <h1>Medical X-Ray Analysis</h1>
 
                 <p>
-                    AI-assisted chest X-ray analysis using image
-                    classification, abnormality localization,
-                    and visual explainability.
+                    Upload a chest X-ray and get an AI-assisted classification,
+                    abnormality localization, and a visual explainability
+                    heatmap — reviewed alongside your clinical judgment,
+                    not in place of it.
                 </p>
+
+                <div class="feature-strip">
+                    <div class="feature-pill">🩻&nbsp; ResNet-50 Classification</div>
+                    <div class="feature-pill">🎯&nbsp; YOLOv8 Detection</div>
+                    <div class="feature-pill">🔥&nbsp; Grad-CAM Explainability</div>
+                </div>
+            </div>
+            """
+        )
+
+        gr.HTML(
+            """
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="icon-circle blue">📤</div>
+                    <h4>1. Upload</h4>
+                    <p>Add a chest X-ray image in PNG or JPEG format, up to 10 MB.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon-circle teal">🧠</div>
+                    <h4>2. AI Analysis</h4>
+                    <p>The image runs through real ResNet-50 and YOLOv8 models on the backend.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon-circle coral">📄</div>
+                    <h4>3. Review & Report</h4>
+                    <p>View results, the Grad-CAM heatmap, and download a PDF summary.</p>
+                </div>
+            </div>
+            """
+        )
+
+        gr.HTML(
+            """
+            <div class="disclaimer-banner">
+                ⚕️ This tool provides AI-assisted results for research and decision support —
+                it is not a confirmed medical diagnosis.
             </div>
             """
         )
