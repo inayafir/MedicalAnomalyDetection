@@ -116,6 +116,12 @@ def create_report(prediction_id: int) -> dict:
     return resp.json()
 
 
+def list_predictions(limit: int = 20) -> list[dict]:
+    """Real prediction history from the backend — never fabricated."""
+    resp = _request("GET", "/predictions", params={"limit": limit, "offset": 0})
+    return resp.json().get("items", [])
+
+
 def fetch_file_bytes(relative_path: str) -> bytes:
     resp = _request("GET", f"/files/{relative_path}")
     return resp.content
