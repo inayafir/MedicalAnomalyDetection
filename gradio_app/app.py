@@ -262,6 +262,24 @@ footer {
     border-radius: 50%;
 }
 
+/* Force all hero text to stay white/light — overrides the
+   --body-text-color: var(--ink) reset applied globally above */
+.welcome-hero,
+.welcome-hero h1,
+.welcome-hero p,
+.welcome-hero .welcome-badge,
+.welcome-hero .feature-pill {
+    color: white !important;
+}
+
+.welcome-hero .welcome-badge {
+    color: #E0F2FE !important;
+}
+
+.welcome-hero .feature-pill {
+    color: #F0F9FF !important;
+}
+
 .welcome-badge {
     display: inline-block;
     background: rgba(255, 255, 255, 0.14);
