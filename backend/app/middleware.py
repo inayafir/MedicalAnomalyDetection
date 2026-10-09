@@ -18,7 +18,9 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         if not settings.API_KEY:
             return await call_next(request)
 
-        if request.url.path in _EXEMPT_PATHS:
+        # /files/* is exempt: browsers cannot attach X-API-Key to <img src>. Stored names are
+        # random uuid4 values (unguessable), but anyone holding a URL can fetch that file.
+        if request.url.path in _EXEMPT_PATHS or request.url.path.startswith("/files/"):
             return await call_next(request)
 
         key = request.headers.get("X-API-Key")
