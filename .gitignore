@@ -1,49 +1,29 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Virtual environment
-.venv/
-venv/
-env/
+node_modules
+dist
+dist-ssr
+*.local
 
-# Dataset - do NOT upload to GitHub
-data/raw/
-data/processed/
-
-# Model weights (root-level duplicates only)
-/*.pt
-/*.pth
-
-# Final trained models - tracked with Git LFS
-!models/
-!models/resnet50/
-!models/resnet50/best_model.pth
-!models/yolov8/
-!models/yolov8/best.pt
-
-*.onnx
-
-# Training outputs
-runs/
-outputs/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# VS Code
-.vscode/
-
-# OS
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-Thumbs.db
-
-# Dataset archive
-*.zip
-
-# Backend
-backend/storage/
-backend/.env
-backend/.pytest_cache/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+__pycache__/
 *.db
+*.sqlite3
+venv/
+.env

@@ -15,6 +15,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -24,6 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          pip install -r backend/requirements-torch-cpu.txt --extra-index-url https://download.pytorch.org/whl/cpu
           pip install -r backend/requirements.txt
 
       - name: Run fast tests
