@@ -6,6 +6,7 @@ pydantic>=2.0,<3.0
 pydantic-settings>=2.0,<3.0
 python-multipart>=0.0.5
 pillow>=9.0,<13.0
+reportlab>=4.0,<5.0
 eval_type_backport>=0.2
 # ML inference
 # NOTE: torch/torchvision are intentionally NOT listed here.

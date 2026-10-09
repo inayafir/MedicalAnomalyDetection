@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy.orm import Session
 
 from app.db import get_db
@@ -30,7 +30,7 @@ async def liveness():
 
 
 @router.get("/health/ready", response_model=HealthResponse)
-async def readiness(db: Session = Depends(get_db)):
+async def readiness(response: Response, db: Session = Depends(get_db)):
     db_ok = False
     try:
         db.execute(__import__("sqlalchemy", fromlist=["text"]).text("SELECT 1"))
@@ -39,6 +39,8 @@ async def readiness(db: Session = Depends(get_db)):
         pass
 
     models_ok = is_model_loaded()
+    if not (db_ok and models_ok):
+        response.status_code = 503  # lets the platform fail a deploy whose models did not load
     return HealthResponse(
         status="ok" if (db_ok and models_ok) else "degraded",
         model_loaded=models_ok,

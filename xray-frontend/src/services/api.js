@@ -3,7 +3,13 @@ import axios from "axios";
 export const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-const client = axios.create({ baseURL: API_BASE_URL });
+// NOTE: VITE_* values are baked into the public JS bundle - anyone can read this key.
+const API_KEY = import.meta.env.VITE_API_KEY || "";
+
+const client = axios.create({
+  baseURL: API_BASE_URL,
+  headers: API_KEY ? { "X-API-Key": API_KEY } : {},
+});
 
 /**
  * Normalizes an Axios/network error into a plain object the UI can render

@@ -10,8 +10,14 @@ services:
     runtime: docker
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    plan: starter
-    healthCheckPath: /health/live
+    # standard = 2GB RAM. torch + ResNet-50 (283MB checkpoint) + YOLOv8m will not fit in
+    # starter's 512MB. Persistent disks also require a paid plan.
+    plan: standard
+    healthCheckPath: /health/ready   # 503 until models + DB are up, so a bad deploy fails
+    disk:
+      name: storage
+      mountPath: /app/storage
+      sizeGB: 5
     envVars:
       - key: ENVIRONMENT
         value: production
@@ -40,6 +46,24 @@ services:
       - key: DATA_RETENTION_DAYS
         value: "-1"
       - key: SENTRY_DSN
+        sync: false
+
+  - type: web
+    name: medical-anomaly-frontend
+    runtime: static
+    rootDir: xray-frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite        # SPA routing (BrowserRouter)
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL
+        # set to https://<backend>.onrender.com BEFORE the first build (baked in at build time)
+        sync: false
+      - key: VITE_API_KEY
+        # copy the backend's generated API_KEY here (visible in the public bundle)
         sync: false
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Gradio demonstration UI — a thin HTTP client over the FastAPI backend.
 # Intentionally lightweight: no torch/ultralytics here, since this app never
 # runs inference itself — it only calls the backend's real /predictions API.
-gradio>=5.0,<7.0
+gradio>=6.0,<7.0  # theme/css are passed to launch(), a Gradio 6 API
 requests>=2.23.0
 pillow>=9.0,<13.0
