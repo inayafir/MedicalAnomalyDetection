@@ -1,10 +1,14 @@
 """
 PDF report generation for a completed prediction.
 
-Builds a real PDF from actual database records (Patient, Image, Prediction) —
-never fabricates classification results, confidence values, or detections.
-If a piece of data is genuinely missing (e.g. no patient linked), the report
-says so explicitly rather than inventing a value.
+Built to look like a real radiology/imaging analysis report rather than an
+academic project artifact — no student names, college name, or "prototype
+demonstration" framing in the body. The safety disclaimer is present but
+kept small, in the footer, as required for responsible AI-assisted output.
+
+Every value in the report comes from real database records (Patient, Image,
+Prediction) — nothing here is fabricated. If a value is genuinely missing,
+the report says so explicitly rather than inventing one.
 """
 from __future__ import annotations
 
@@ -19,6 +23,7 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
     Image as RLImage,
+    KeepTogether,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -29,11 +34,18 @@ from reportlab.platypus import (
 from app.config import settings
 from app.models import Image as ImageModel, Patient, Prediction
 
-DISCLAIMER = (
-    "This system is an academic/decision-support prototype and is not a "
-    "medical diagnosis. Results should be reviewed by a qualified medical "
-    "professional before any clinical decision is made."
+FOOTER_DISCLAIMER = (
+    "AI-generated results are intended to assist clinical review and should "
+    "be interpreted by a qualified healthcare professional."
 )
+
+# Palette — medical blue/teal, used sparingly and meaningfully (not decorative)
+_BRAND = colors.HexColor("#0f6e8c")       # header / primary accent
+_BRAND_LIGHT = colors.HexColor("#e6f3f7")  # light tint backgrounds
+_INK = colors.HexColor("#1b2733")
+_MUTED = colors.HexColor("#5c6b78")
+_LINE = colors.HexColor("#dbe4ea")
+_AMBER = colors.HexColor("#b96b00")
 
 
 def _storage_path(relative_path: str | None) -> Path | None:
@@ -43,100 +55,130 @@ def _storage_path(relative_path: str | None) -> Path | None:
     return abs_path if abs_path.exists() else None
 
 
+def _footer(canvas, doc):
+    canvas.saveState()
+    canvas.setFont("Helvetica", 7.5)
+    canvas.setFillColor(_MUTED)
+    canvas.drawString(0.7 * inch, 0.45 * inch, FOOTER_DISCLAIMER)
+    canvas.drawRightString(
+        letter[0] - 0.7 * inch, 0.45 * inch, f"Page {doc.page}"
+    )
+    canvas.setStrokeColor(_LINE)
+    canvas.line(0.7 * inch, 0.62 * inch, letter[0] - 0.7 * inch, 0.62 * inch)
+    canvas.restoreState()
+
+
 def generate_report_pdf(
     prediction: Prediction,
     image: ImageModel,
     patient: Patient | None,
 ) -> bytes:
-    """Build the PDF and return its raw bytes. Raises on missing required data —
-    never silently substitutes placeholder/fake content for a real result."""
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        "ReportTitle", parent=styles["Title"], fontSize=18, spaceAfter=4
+
+    header_title = ParagraphStyle(
+        "HeaderTitle", parent=styles["Title"], fontSize=17, textColor=_INK, spaceAfter=0
     )
-    subtitle_style = ParagraphStyle(
-        "ReportSubtitle", parent=styles["Normal"], fontSize=10, textColor=colors.grey
+    header_sub = ParagraphStyle(
+        "HeaderSub", parent=styles["Normal"], fontSize=9, textColor=_MUTED
     )
     section_style = ParagraphStyle(
-        "SectionHeading", parent=styles["Heading2"], spaceBefore=14, spaceAfter=6
+        "SectionHeading",
+        parent=styles["Heading2"],
+        fontSize=11,
+        textColor=_BRAND,
+        spaceBefore=16,
+        spaceAfter=6,
     )
-    disclaimer_style = ParagraphStyle(
-        "Disclaimer",
-        parent=styles["Normal"],
-        fontSize=8,
-        textColor=colors.HexColor("#555555"),
-        borderColor=colors.HexColor("#999999"),
-        borderWidth=0.5,
-        borderPadding=6,
+    prediction_label_style = ParagraphStyle(
+        "PredLabel", parent=styles["Normal"], fontSize=9, textColor=colors.white
     )
+    prediction_class_style = ParagraphStyle(
+        "PredClass",
+        parent=styles["Title"],
+        fontSize=26,
+        textColor=colors.white,
+        spaceAfter=0,
+        spaceBefore=2,
+    )
+    prediction_meta_style = ParagraphStyle(
+        "PredMeta", parent=styles["Normal"], fontSize=9.5, textColor=colors.white
+    )
+    body_style = styles["Normal"]
 
     story = []
 
     # --- Header ---------------------------------------------------------
-    story.append(Paragraph("Chest X-Ray Analysis Report", title_style))
+    story.append(Paragraph("Chest X-Ray Analysis Report", header_title))
     story.append(
         Paragraph(
-            "AI-assisted classification and detection — ResNet-50 + YOLOv8m + Grad-CAM",
-            subtitle_style,
-        )
-    )
-    story.append(
-        Paragraph(
-            f"Generated: {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
-            subtitle_style,
+            f"Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+            header_sub,
         )
     )
     story.append(Spacer(1, 10))
-    story.append(Paragraph(DISCLAIMER, disclaimer_style))
-    story.append(Spacer(1, 12))
 
-    # --- Patient information --------------------------------------------
-    story.append(Paragraph("Patient Information", section_style))
+    # --- Patient / study info table --------------------------------------
     patient_rows = [
-        ["Patient ID", str(patient.id) if patient else "Not provided"],
-        ["Name", patient.display_name if patient and patient.display_name else "Not provided"],
+        ["Patient ID", str(patient.id) if patient else "—"],
+        ["Patient Name", patient.display_name if patient and patient.display_name else "—"],
         ["Study Image", image.original_filename],
-        ["Uploaded", image.uploaded_at.strftime("%Y-%m-%d %H:%M UTC")],
+        ["Study Date", image.uploaded_at.strftime("%Y-%m-%d %H:%M UTC")],
+        ["Examination", "Chest X-Ray"],
     ]
-    patient_table = Table(patient_rows, colWidths=[150, 320])
+    patient_table = Table(patient_rows, colWidths=[130, 340])
     patient_table.setStyle(
         TableStyle(
             [
                 ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#444444")),
+                ("TEXTCOLOR", (0, 0), (0, -1), _MUTED),
+                ("TEXTCOLOR", (1, 0), (1, -1), _INK),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                 ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#dddddd")),
+                ("LINEBELOW", (0, 0), (-1, -1), 0.25, _LINE),
             ]
         )
     )
     story.append(patient_table)
 
-    # --- Classification result -------------------------------------------
-    story.append(Paragraph("Classification Result (ResNet-50)", section_style))
-    class_rows = [
-        ["Predicted Class", prediction.predicted_class],
-        ["Confidence", f"{prediction.confidence * 100:.1f}%"],
-    ]
-    class_table = Table(class_rows, colWidths=[150, 320])
-    class_table.setStyle(
+    # --- Primary prediction — the visual focal point of the report -------
+    story.append(Spacer(1, 14))
+    confidence_pct = prediction.confidence * 100
+    pred_inner = Table(
+        [
+            [Paragraph("AI ANALYSIS &nbsp;&middot;&nbsp; PRIMARY CLASSIFICATION", prediction_label_style)],
+            [Paragraph(prediction.predicted_class.upper(), prediction_class_style)],
+            [Paragraph(f"Confidence: {confidence_pct:.1f}% &nbsp;&mdash;&nbsp; Model: ResNet-50", prediction_meta_style)],
+        ],
+        colWidths=[470],
+    )
+    pred_inner.setStyle(
         TableStyle(
             [
-                ("FONTSIZE", (0, 0), (-1, -1), 9),
-                ("FONTNAME", (1, 0), (1, 0), "Helvetica-Bold"),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                ("TOPPADDING", (0, 0), (-1, -1), 4),
-                ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#dddddd")),
+                ("BACKGROUND", (0, 0), (-1, -1), _BRAND),
+                ("LEFTPADDING", (0, 0), (-1, -1), 18),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 18),
+                ("TOPPADDING", (0, 0), (0, 0), 12),
+                ("BOTTOMPADDING", (0, 2), (0, 2), 12),
+                ("TOPPADDING", (0, 1), (0, 1), 2),
+                ("BOTTOMPADDING", (0, 1), (0, 1), 2),
             ]
         )
     )
-    story.append(class_table)
+    story.append(pred_inner)
 
-    # --- Detections (YOLOv8) ---------------------------------------------
-    story.append(Paragraph("Detected Abnormalities (YOLOv8m)", section_style))
+    # --- Detected regions (YOLOv8m) — kept conceptually separate ---------
+    story.append(Paragraph("Detected Regions (YOLOv8m)", section_style))
+    story.append(
+        Paragraph(
+            "Localized abnormality candidates, independent of the primary "
+            "classification above. Low-confidence entries are not confirmed findings.",
+            ParagraphStyle("DetNote", parent=body_style, fontSize=8, textColor=_MUTED),
+        )
+    )
+    story.append(Spacer(1, 4))
     bboxes = json.loads(prediction.bboxes or "[]")
     if bboxes:
-        det_header = ["Class", "Confidence", "X1", "Y1", "X2", "Y2"]
+        det_header = ["Region", "Confidence", "X1", "Y1", "X2", "Y2"]
         det_rows = [det_header] + [
             [
                 b.get("class") or b.get("class_", ""),
@@ -148,16 +190,17 @@ def generate_report_pdf(
             ]
             for b in bboxes
         ]
-        det_table = Table(det_rows, colWidths=[150, 80, 55, 55, 55, 55])
+        det_table = Table(det_rows, colWidths=[160, 80, 55, 55, 55, 55])
         det_table.setStyle(
             TableStyle(
                 [
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f0f0f0")),
+                    ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+                    ("BACKGROUND", (0, 0), (-1, 0), _BRAND_LIGHT),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), _BRAND),
                     ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#dddddd")),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("GRID", (0, 0), (-1, -1), 0.25, _LINE),
                 ]
             )
         )
@@ -165,57 +208,68 @@ def generate_report_pdf(
     else:
         story.append(
             Paragraph(
-                "No abnormalities detected by the YOLOv8m model at the current "
-                "confidence threshold.",
-                styles["Normal"],
+                "No abnormality regions detected at the current confidence threshold.",
+                body_style,
             )
         )
 
     # --- Images ------------------------------------------------------------
-    story.append(Paragraph("Imaging", section_style))
-    img_max_width = 3.2 * inch
+    story.append(Paragraph("Image Analysis", section_style))
+    img_max_width = 2.4 * inch
 
+    def _scaled(path: Path) -> RLImage:
+        from PIL import Image as PILImage
+        with PILImage.open(path) as im:
+            w, h = im.size
+        scale = img_max_width / w
+        return RLImage(str(path), width=img_max_width, height=h * scale)
+
+    img_cells = []
+    captions = []
     original_path = _storage_path(image.file_path)
     if original_path is not None:
-        story.append(Paragraph("Original X-Ray", styles["Heading4"]))
-        story.append(_scaled_image(original_path, img_max_width))
-        story.append(Spacer(1, 8))
-    else:
-        story.append(Paragraph("Original X-ray image file not found on disk.", styles["Normal"]))
-
+        img_cells.append(_scaled(original_path))
+        captions.append("Original X-Ray")
     heatmap_path = _storage_path(prediction.heatmap_path)
     if heatmap_path is not None:
-        story.append(Paragraph("Grad-CAM Explainability Heatmap", styles["Heading4"]))
-        story.append(_scaled_image(heatmap_path, img_max_width))
-    else:
-        story.append(
-            Paragraph(
-                "Grad-CAM heatmap was not generated for this prediction.", styles["Normal"]
+        img_cells.append(_scaled(heatmap_path))
+        captions.append("Grad-CAM Explainability")
+
+    if img_cells:
+        img_table = Table([img_cells, captions], colWidths=[img_max_width + 10] * len(img_cells))
+        img_table.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("FONTSIZE", (0, 1), (-1, 1), 8),
+                    ("TEXTCOLOR", (0, 1), (-1, 1), _MUTED),
+                    ("TOPPADDING", (0, 1), (-1, 1), 4),
+                ]
             )
         )
+        story.append(KeepTogether(img_table))
+    else:
+        story.append(Paragraph("No images available for this study.", body_style))
 
-    story.append(Spacer(1, 16))
-    story.append(Paragraph(DISCLAIMER, disclaimer_style))
+    if heatmap_path is not None:
+        story.append(Spacer(1, 4))
+        story.append(
+            Paragraph(
+                "Grad-CAM highlights the image regions that most influenced the "
+                "ResNet-50 classification decision.",
+                ParagraphStyle("GcNote", parent=body_style, fontSize=8, textColor=_MUTED),
+            )
+        )
 
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf,
         pagesize=letter,
-        topMargin=0.6 * inch,
-        bottomMargin=0.6 * inch,
+        topMargin=0.55 * inch,
+        bottomMargin=0.75 * inch,
         leftMargin=0.7 * inch,
         rightMargin=0.7 * inch,
         title="Chest X-Ray Analysis Report",
     )
-    doc.build(story)
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return buf.getvalue()
-
-
-def _scaled_image(path: Path, max_width: float) -> RLImage:
-    """Load an image sized to max_width, preserving aspect ratio."""
-    from PIL import Image as PILImage
-
-    with PILImage.open(path) as im:
-        w, h = im.size
-    scale = max_width / w
-    return RLImage(str(path), width=max_width, height=h * scale)
